@@ -13,14 +13,11 @@ from pydantic import BaseModel
 from backend.config import (
     OUTPUTS_DIR,
     TASKS_DIR,
-    EDGE_TTS_VOICES,
-    COSYVOICE_VOICES,
     AVAILABLE_WHISPER_MODELS,
     BASE_DIR,
     PROJECT_ROOT
 )
 from backend.core.task_manager import task_manager, TaskState
-from backend.services.tts import EdgeTTSService, CosyVoiceService
 from backend.services.translator import DeepSeekTranslator
 from backend.services.f5_tts_mlx import F5TTSMLXService
 
@@ -44,16 +41,12 @@ app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 # Request schemas
 class CreateTaskRequest(BaseModel):
     url: str
-    tts_engine: str = "f5_tts_mlx"
-    voice_name: str = "clone"
     hard_sub: bool = True
     auto_pipeline: bool = False
     asr_model: Optional[str] = None
     deepseek_model: str = "deepseek4.1flash"
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_api_key: str
-    dashscope_api_key: Optional[str] = None
-    cosyvoice_endpoint: Optional[str] = None
 
 class TestLLMRequest(BaseModel):
     api_key: str
@@ -76,13 +69,9 @@ class UpdateSpeakerRefRequest(BaseModel):
 
 class PreviewTTSRequest(BaseModel):
     text: str
-    engine: str = "f5_tts_mlx"
-    voice: str = "clone"
     task_id: Optional[str] = None
     ref_audio_path: Optional[str] = None
     ref_audio_text: Optional[str] = None
-    dashscope_api_key: Optional[str] = None
-    cosyvoice_endpoint: Optional[str] = None
 
 
 @app.get("/api/health")
@@ -91,11 +80,11 @@ async def health():
 
 @app.get("/api/config/options")
 async def get_options():
-    """Returns available ASR models, TTS engines, and voices."""
+    """Returns available ASR models and default TTS engine."""
     return {
         "asr_models": AVAILABLE_WHISPER_MODELS,
-        "edge_tts_voices": EDGE_TTS_VOICES,
-        "cosyvoice_voices": COSYVOICE_VOICES,
+        "tts_engine": "f5_tts_mlx",
+        "tts_name": "F5-TTS MLX (原人物声音克隆)"
     }
 
 @app.post("/api/config/test-llm")
@@ -260,33 +249,29 @@ async def confirm_subtitles(task_id: str, req: ConfirmSubtitlesRequest):
 
 @app.post("/api/tts/preview")
 async def preview_tts(req: PreviewTTSRequest):
-    """Generates a small audio snippet for audition in the web UI."""
+    """Generates a small audio snippet for audition in the web UI using F5-TTS voice clone."""
     temp_preview_dir = TASKS_DIR / "previews"
     temp_preview_dir.mkdir(parents=True, exist_ok=True)
-    preview_file = temp_preview_dir / f"preview_{abs(hash(req.text + req.voice + str(req.task_id))) % 1000000}.wav"
+    preview_file = temp_preview_dir / f"preview_{abs(hash(req.text + str(req.task_id))) % 1000000}.wav"
 
     try:
         loop = asyncio.get_running_loop()
-        if req.engine == "f5_tts_mlx":
-            ref_audio = req.ref_audio_path
-            ref_text = req.ref_audio_text
-            if req.task_id:
-                task = task_manager.get_task(req.task_id)
-                if task and task.speaker_ref:
-                    ref_audio = task.speaker_ref.get("audio_path")
-                    ref_text = task.speaker_ref.get("ref_text")
+        ref_audio = req.ref_audio_path
+        ref_text = req.ref_audio_text
+        if req.task_id:
+            task = task_manager.get_task(req.task_id)
+            if task and task.speaker_ref:
+                ref_audio = task.speaker_ref.get("audio_path")
+                ref_text = task.speaker_ref.get("ref_text")
 
-            service = F5TTSMLXService(ref_audio_path=ref_audio, ref_audio_text=ref_text)
-            await loop.run_in_executor(
-                None,
-                lambda: service.synthesize(req.text, str(preview_file))
-            )
-        elif req.engine == "cosyvoice":
-            service = CosyVoiceService(api_key=req.dashscope_api_key, endpoint=req.cosyvoice_endpoint)
-            await service.synthesize(req.text, req.voice, str(preview_file))
-        else:
-            service = EdgeTTSService()
-            await service.synthesize(req.text, req.voice, str(preview_file))
+        if not ref_audio or not os.path.exists(ref_audio):
+            raise ValueError("未找到用于克隆的声音参考切片，请确认任务是否已提取原声")
+
+        service = F5TTSMLXService(ref_audio_path=ref_audio, ref_audio_text=ref_text)
+        await loop.run_in_executor(
+            None,
+            lambda: service.synthesize(req.text, str(preview_file))
+        )
 
         return FileResponse(str(preview_file), media_type="audio/wav")
     except Exception as e:

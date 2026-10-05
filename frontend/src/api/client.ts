@@ -11,8 +11,8 @@ export interface ModelOption {
 
 export interface ConfigOptions {
   asr_models: ModelOption[];
-  edge_tts_voices: VoiceOption[];
-  cosyvoice_voices: VoiceOption[];
+  tts_engine?: string;
+  tts_name?: string;
 }
 
 export interface SubtitleItem {
@@ -77,16 +77,12 @@ export interface TaskStatus {
 
 export interface CreateTaskParams {
   url: string;
-  tts_engine: string;
-  voice_name: string;
   hard_sub: boolean;
   auto_pipeline: boolean;
   asr_model?: string;
   deepseek_model?: string;
   deepseek_base_url?: string;
   deepseek_api_key: string;
-  dashscope_api_key?: string;
-  cosyvoice_endpoint?: string;
 }
 
 export interface LLMTestResult {
@@ -182,11 +178,9 @@ export async function updateSpeakerRef(
 
 export async function previewTTSAudio(params: {
   text: string;
-  engine: string;
-  voice: string;
   task_id?: string;
-  dashscope_api_key?: string;
-  cosyvoice_endpoint?: string;
+  ref_audio_path?: string;
+  ref_audio_text?: string;
 }): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/tts/preview`, {
     method: "POST",

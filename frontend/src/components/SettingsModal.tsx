@@ -5,11 +5,9 @@ import {
   CheckCircle,
   AlertCircle,
   Cpu,
-  Radio,
   Activity,
   Globe,
   Loader2,
-  Check,
   AlertTriangle,
 } from "lucide-react";
 import { testLLMConnection, LLMTestResult } from "../api/client";
@@ -18,8 +16,6 @@ export interface SettingsState {
   deepseekApiKey: string;
   deepseekBaseUrl: string;
   deepseekModel: string;
-  dashscopeApiKey: string;
-  cosyvoiceEndpoint: string;
   asrModel: string;
 }
 
@@ -136,7 +132,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 font-mono transition"
             />
             <p className="text-[11px] text-slate-400">
-              支持 DeepSeek 官方 API 或第三方 OpenAI 兼容聚合平台（硅基流动、OpenRouter 等）
+              用于驱动精准口语化意译与原声台词节奏适配
             </p>
           </div>
 
@@ -158,7 +154,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono transition"
               />
               <p className="text-[10px] text-slate-500">
-                默认 deepseek4.1flash (可填 deepseek-chat 等)
+                默认 deepseek4.1flash (可填 deepseek-chat)
               </p>
             </div>
 
@@ -252,61 +248,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
             )}
-          </div>
-
-          {/* CosyVoice Config */}
-          <div className="border-t border-slate-800/80 pt-4 space-y-4">
-            <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center space-x-1.5">
-              <span>CosyVoice 3 扩展配置 (可选)</span>
-              <span className="text-[10px] lowercase font-normal px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">
-                默认使用免费的 Edge-TTS，无需填写
-              </span>
-            </h3>
-
-            {/* DashScope API Key */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-slate-200">
-                  阿里百炼 DashScope API Key (用于 CosyVoice 官方 API)
-                </label>
-                <a
-                  href="https://bailian.console.aliyun.com/"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs text-blue-400 hover:underline"
-                >
-                  百炼控制台 →
-                </a>
-              </div>
-              <input
-                type="password"
-                placeholder="sk-..."
-                value={localSettings.dashscopeApiKey}
-                onChange={(e) =>
-                  setLocalSettings({ ...localSettings, dashscopeApiKey: e.target.value })
-                }
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono transition"
-              />
-            </div>
-
-            {/* Local CosyVoice Endpoint */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-slate-200">
-                本地 CosyVoice 服务端点 (可选)
-              </label>
-              <input
-                type="text"
-                placeholder="http://localhost:50000"
-                value={localSettings.cosyvoiceEndpoint}
-                onChange={(e) =>
-                  setLocalSettings({ ...localSettings, cosyvoiceEndpoint: e.target.value })
-                }
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono transition"
-              />
-              <p className="text-[11px] text-slate-400">
-                若在本地部署了 CosyVoice 推理容器/脚本，填写本地服务地址
-              </p>
-            </div>
           </div>
 
           {/* MLX ASR Model */}

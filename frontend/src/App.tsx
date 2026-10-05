@@ -21,8 +21,6 @@ const DEFAULT_SETTINGS: SettingsState = {
   deepseekApiKey: "",
   deepseekBaseUrl: "https://api.deepseek.com/v1",
   deepseekModel: "deepseek4.1flash",
-  dashscopeApiKey: "",
-  cosyvoiceEndpoint: "",
   asrModel: "mlx-community/whisper-large-v3-turbo",
 };
 
@@ -215,7 +213,7 @@ export const App: React.FC = () => {
               </h2>
               <p className="text-sm text-slate-400">
                 支持 Bilibili & YouTube · Apple Silicon MLX GPU 加速 · DeepSeek 智能意译 ·
-                微软 Edge TTS / 阿里 CosyVoice 3
+                F5-TTS MLX 原人物零样本声音克隆
               </p>
             </div>
 
@@ -267,8 +265,6 @@ export const App: React.FC = () => {
           onClose={() => setIsReviewOpen(false)}
           taskId={currentTaskId}
           initialSubtitles={reviewSubtitles}
-          ttsEngine={lastSubmittedParams?.tts_engine || "f5_tts_mlx"}
-          voiceName={lastSubmittedParams?.voice_name || "clone"}
           settings={settings}
           onConfirmed={() => {
             setIsReviewOpen(false);

@@ -42,19 +42,5 @@ AVAILABLE_WHISPER_MODELS = [
     {"id": "mlx-community/whisper-small", "name": "Whisper Small (均衡)"},
 ]
 
-# TTS Voices
-EDGE_TTS_VOICES = [
-    {"id": "zh-CN-YunxiNeural", "name": "云希 (活力男声 - 视频解说推荐)", "gender": "Male"},
-    {"id": "zh-CN-XiaoxiaoNeural", "name": "晓晓 (温柔女声 - 旁白推荐)", "gender": "Female"},
-    {"id": "zh-CN-YunjianNeural", "name": "云健 (沉稳男声 - 科技/纪录片)", "gender": "Male"},
-    {"id": "zh-CN-XiaoyiNeural", "name": "晓伊 (亲切女声)", "gender": "Female"},
-    {"id": "zh-CN-YunyangNeural", "name": "云扬 (专业男播音)", "gender": "Male"},
-    {"id": "zh-CN-liaoning-XiaobeiNeural", "name": "晓北 (辽宁风趣女声)", "gender": "Female"},
-    {"id": "zh-CN-shaanxi-XiaoniNeural", "name": "晓妮 (陕西风趣女声)", "gender": "Female"},
-]
-
-COSYVOICE_VOICES = [
-    {"id": "longxiaochun", "name": "龙小春 (自然女声)", "gender": "Female"},
-    {"id": "longyuan", "name": "龙渊 (沉稳男声)", "gender": "Male"},
-    {"id": "longyue", "name": "龙悦 (亲和女声)", "gender": "Female"},
-]
+# TTS Engine
+DEFAULT_TTS_MODEL = "lucasnewman/f5-tts-mlx"

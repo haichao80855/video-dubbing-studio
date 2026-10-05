@@ -3,7 +3,7 @@ import subprocess
 import logging
 from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
-from backend.config import FFMPEG_PATH, OUTPUTS_DIR
+from backend.config import FFMPEG_PATH, FFPROBE_PATH, OUTPUTS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class VideoComposer:
     ) -> Dict[str, str]:
         """
         Muxes video and Chinese audio track, embeds or burns subtitles,
-        producing the final Chinese MP4.
+        producing the final Chinese MP4 with guaranteed 48kHz Stereo AAC audio.
         """
         if progress_callback:
             progress_callback(10.0, "生成中文字幕文件...")
@@ -64,11 +64,14 @@ class VideoComposer:
             dst.write(src.read())
 
         if progress_callback:
-            progress_callback(30.0, f"正在进行 FFmpeg 封装与视频合成 (硬字幕={hard_sub})...")
+            progress_callback(30.0, f"正在进行 FFmpeg 混流与立体声编码 (硬字幕={hard_sub})...")
+
+        # Ensure audio_path is valid and non-empty
+        if not os.path.exists(audio_path) or os.path.getsize(audio_path) < 4096:
+            raise RuntimeError(f"合成所需的配音音轨文件异常或为空: {audio_path}")
 
         if hard_sub:
             # Burn subtitles into video stream
-            # Escaping subtitle filename for FFmpeg filter syntax
             escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
             sub_filter = f"subtitles=filename='{escaped_srt}':force_style='FontSize=22,FontName=Arial,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=25'"
             
@@ -84,11 +87,12 @@ class VideoComposer:
                 "-crf", "22",
                 "-c:a", "aac",
                 "-b:a", "192k",
-                "-shortest",
+                "-ar", "48000",
+                "-ac", "2",
                 output_mp4
             ]
         else:
-            # Soft subtitles or stream copy (very fast)
+            # Soft subtitles or stream copy
             cmd = [
                 FFMPEG_PATH, "-y",
                 "-i", video_path,
@@ -100,9 +104,10 @@ class VideoComposer:
                 "-c:v", "copy",
                 "-c:a", "aac",
                 "-b:a", "192k",
+                "-ar", "48000",
+                "-ac", "2",
                 "-c:s", "mov_text",
                 "-metadata:s:s:0", "language=chi",
-                "-shortest",
                 output_mp4
             ]
 
@@ -123,7 +128,8 @@ class VideoComposer:
                     "-c:v", "copy",
                     "-c:a", "aac",
                     "-b:a", "192k",
-                    "-shortest",
+                    "-ar", "48000",
+                    "-ac", "2",
                     output_mp4
                 ]
                 retry_res = subprocess.run(retry_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -132,8 +138,12 @@ class VideoComposer:
             else:
                 raise RuntimeError(f"FFmpeg 合成最终视频失败: {err}")
 
+        # Post-check: verify output MP4 file exists and has size
+        if not os.path.exists(output_mp4) or os.path.getsize(output_mp4) < 10000:
+            raise RuntimeError(f"合成的 MP4 文件异常或大小为零: {output_mp4}")
+
         if progress_callback:
-            progress_callback(100.0, "最终中文 MP4 视频合成完毕！")
+            progress_callback(100.0, "最终中文 MP4 视频合成完毕！(含标准 48kHz 立体声配音)")
 
         return {
             "output_mp4": output_mp4,

@@ -2,11 +2,8 @@ import os
 import asyncio
 import subprocess
 import logging
-from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
-import httpx
-import edge_tts
 from pydub import AudioSegment
 from backend.config import FFMPEG_PATH, FFPROBE_PATH
 from backend.services.f5_tts_mlx import F5TTSMLXService
@@ -31,136 +28,22 @@ def get_audio_duration(file_path: str) -> float:
             return round(float(res.stdout.strip()), 3)
         return 0.0
 
-def convert_to_pcm_wav(input_file: str, output_wav: str):
-    """Convert any audio file to 16kHz mono 16-bit PCM WAV."""
-    cmd = [
-        FFMPEG_PATH, "-y",
-        "-i", input_file,
-        "-acodec", "pcm_s16le",
-        "-ar", "16000",
-        "-ac", "1",
-        output_wav
-    ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if res.returncode != 0:
-        raise RuntimeError(f"FFmpeg audio conversion error: {res.stderr.decode('utf-8', errors='ignore')}")
-
-class BaseTTS(ABC):
-    @abstractmethod
-    async def synthesize(self, text: str, voice: str, output_path: str) -> float:
-        """Synthesizes text to output_path (wav) and returns duration in seconds."""
-        pass
-
-class EdgeTTSService(BaseTTS):
-    """High quality, free Microsoft Edge TTS."""
-
-    async def synthesize(self, text: str, voice: str, output_path: str) -> float:
-        voice_id = voice or "zh-CN-YunxiNeural"
-        temp_mp3 = output_path + ".temp.mp3"
-        
-        # Clean text for TTS
-        clean_text = text.strip()
-        if not clean_text:
-            clean_text = "..."
-
-        comm = edge_tts.Communicate(clean_text, voice_id)
-        await comm.save(temp_mp3)
-
-        # Convert to standard 16kHz PCM wav
-        convert_to_pcm_wav(temp_mp3, output_path)
-        if os.path.exists(temp_mp3):
-            os.remove(temp_mp3)
-
-        return get_audio_duration(output_path)
-
-class CosyVoiceService(BaseTTS):
-    """CosyVoice 3 via DashScope API or local HTTP server."""
-
-    def __init__(self, api_key: Optional[str] = None, endpoint: Optional[str] = None):
-        self.api_key = (api_key or "").strip()
-        self.endpoint = (endpoint or "").strip()
-
-    async def synthesize(self, text: str, voice: str, output_path: str) -> float:
-        clean_text = text.strip()
-        if not clean_text:
-            clean_text = "..."
-
-        temp_out = output_path + ".temp.audio"
-
-        # Case 1: Local CosyVoice endpoint
-        if self.endpoint:
-            url = f"{self.endpoint.rstrip('/')}/tts"
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(url, json={"text": clean_text, "voice": voice or "longxiaochun"})
-                if resp.status_code != 200:
-                    raise RuntimeError(f"Local CosyVoice error {resp.status_code}: {resp.text}")
-                with open(temp_out, "wb") as f:
-                    f.write(resp.content)
-            convert_to_pcm_wav(temp_out, output_path)
-            if os.path.exists(temp_out):
-                os.remove(temp_out)
-            return get_audio_duration(output_path)
-
-        # Case 2: Alibaba Cloud DashScope API
-        if not self.api_key:
-            raise ValueError("使用 CosyVoice 需要提供 DashScope API Key 或本地端点地址")
-
-        url = "https://dashscope.aliyuncs.com/api/v1/services/audio/text-to-speech/speech-synthesis"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": "cosyvoice-v1",
-            "input": {
-                "text": clean_text
-            },
-            "parameters": {
-                "voice": voice or "longxiaochun",
-                "format": "wav",
-                "sample_rate": 16000
-            }
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            if resp.status_code != 200:
-                raise RuntimeError(f"DashScope CosyVoice API error {resp.status_code}: {resp.text}")
-            with open(temp_out, "wb") as f:
-                f.write(resp.content)
-
-        convert_to_pcm_wav(temp_out, output_path)
-        if os.path.exists(temp_out):
-            os.remove(temp_out)
-        return get_audio_duration(output_path)
-
-
-class TTSRunner:
-    """Manages batch TTS generation for subtitle segments."""
+class F5TTSCloneRunner:
+    """Manages zero-shot voice cloning using F5-TTS MLX for all subtitle segments."""
 
     def __init__(
         self,
-        engine_type: str = "f5_tts_mlx",
-        voice_name: str = "zh-CN-YunxiNeural",
-        api_key: Optional[str] = None,
-        endpoint: Optional[str] = None,
         ref_audio_path: Optional[str] = None,
-        ref_audio_text: Optional[str] = None
+        ref_audio_text: Optional[str] = None,
+        model_name: str = "lucasnewman/f5-tts-mlx"
     ):
-        self.engine_type = engine_type
-        self.voice_name = voice_name
         self.ref_audio_path = ref_audio_path
         self.ref_audio_text = ref_audio_text
-
-        if engine_type == "f5_tts_mlx":
-            self.service = F5TTSMLXService(
-                ref_audio_path=ref_audio_path,
-                ref_audio_text=ref_audio_text
-            )
-        elif engine_type == "cosyvoice":
-            self.service = CosyVoiceService(api_key=api_key, endpoint=endpoint)
-        else:
-            self.service = EdgeTTSService()
+        self.service = F5TTSMLXService(
+            model_name=model_name,
+            ref_audio_path=ref_audio_path,
+            ref_audio_text=ref_audio_text
+        )
 
     async def generate_all(
         self,
@@ -169,7 +52,7 @@ class TTSRunner:
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Synthesizes audio for each subtitle item in parallel/sequence.
+        Synthesizes cloned speech for each subtitle item in sequence.
         Adds 'audio_path' and 'tts_duration' to each segment.
         """
         tts_dir = task_dir / "tts_clips"
@@ -177,49 +60,48 @@ class TTSRunner:
 
         results = []
         total = len(subtitles)
-
-        # Concurrency limit (F5-TTS MLX runs best with sequential/bounded concurrency on Metal)
-        concurrency = 1 if self.engine_type == "f5_tts_mlx" else 4
-        semaphore = asyncio.Semaphore(concurrency)
         loop = asyncio.get_running_loop()
+        failed_count = 0
 
-        async def process_one(idx: int, item: Dict[str, Any]):
-            async with semaphore:
-                seg_id = item["id"]
-                text = item.get("translated_text", "").strip() or item.get("text", "")
-                out_path = str(tts_dir / f"clip_{seg_id:04d}.wav")
-                try:
-                    if self.engine_type == "f5_tts_mlx":
-                        duration = await loop.run_in_executor(
-                            None,
-                            lambda: self.service.synthesize(text, out_path)
-                        )
-                    else:
-                        duration = await self.service.synthesize(text, self.voice_name, out_path)
-                except Exception as e:
-                    logger.error(f"TTS synthesis failed for segment {seg_id}: {e}")
-                    # Create 0.5s silence as fallback
-                    silence = AudioSegment.silent(duration=500, frame_rate=16000)
-                    silence.export(out_path, format="wav")
-                    duration = 0.5
+        for idx, item in enumerate(subtitles):
+            seg_id = item["id"]
+            text = (item.get("translated_text", "").strip() or item.get("text", "")).strip()
+            out_path = str(tts_dir / f"clip_{seg_id:04d}.wav")
 
-                return {
-                    **item,
-                    "audio_path": out_path,
-                    "tts_duration": duration
-                }
+            try:
+                # F5-TTS MLX runs sequentially to maximize Apple Silicon Metal throughput
+                duration = await loop.run_in_executor(
+                    None,
+                    lambda: self.service.synthesize(text, out_path)
+                )
 
-        tasks = [process_one(i, item) for i, item in enumerate(subtitles)]
+                # Validate generated audio file
+                if not os.path.exists(out_path) or os.path.getsize(out_path) < 1000 or duration <= 0.05:
+                    raise RuntimeError(f"切片 #{seg_id} 生成的音频文件异常或过小 (大小: {os.path.getsize(out_path) if os.path.exists(out_path) else 0} 字节)")
 
-        completed = 0
-        for fut in asyncio.as_completed(tasks):
-            res = await fut
-            results.append(res)
-            completed += 1
+            except Exception as e:
+                logger.error(f"F5-TTS 声音克隆分句 #{seg_id} 失败: {e}")
+                failed_count += 1
+                # If too many fail, fail the task directly rather than generating silent video!
+                if failed_count > max(3, int(total * 0.4)):
+                    raise RuntimeError(f"F5-TTS 声音克隆连续失败达到阈值 ({failed_count}/{total})，已终止以防止生成无声音频。最新错误: {e}")
+
+                # Fallback: short silence for this single failed sentence
+                silence = AudioSegment.silent(duration=500, frame_rate=48000)
+                silence.export(out_path, format="wav")
+                duration = 0.5
+
+            results.append({
+                **item,
+                "audio_path": out_path,
+                "tts_duration": duration
+            })
+
             if progress_callback:
-                pct = completed / total * 100
-                progress_callback(pct, f"正在进行语音合成配音 ({completed}/{total})...")
+                pct = (idx + 1) / total * 100
+                progress_callback(pct, f"F5-TTS 正在克隆合成原声配音 ({idx + 1}/{total})...")
 
-        # Sort back by ID
-        results.sort(key=lambda x: x["id"])
         return results
+
+# Backward compatibility alias
+TTSRunner = F5TTSCloneRunner

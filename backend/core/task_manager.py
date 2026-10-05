@@ -10,7 +10,7 @@ from backend.config import TASKS_DIR
 from backend.services.downloader import VideoDownloader
 from backend.services.asr import get_asr_engine
 from backend.services.translator import DeepSeekTranslator
-from backend.services.tts import TTSRunner
+from backend.services.tts import F5TTSCloneRunner
 from backend.services.speaker_extractor import SpeakerExtractor
 from backend.services.aligner import AudioAligner
 from backend.services.composer import VideoComposer
@@ -238,17 +238,10 @@ class TaskManager:
                 await task.review_event.wait()
                 task.add_log("用户确认校对完成，开始后续配音合成...", TaskState.WAITING_REVIEW, 100.0)
 
-            # --- STAGE 5: TTS (F5-TTS MLX / Edge-TTS / CosyVoice) ---
-            tts_engine_type = cfg.get("tts_engine", "f5_tts_mlx")
-            voice_name = cfg.get("voice_name", "clone")
-            engine_desc = "F5-TTS MLX 原人物声音克隆" if tts_engine_type == "f5_tts_mlx" else f"{tts_engine_type} (音色: {voice_name})"
-            task.add_log(f"开始使用 {engine_desc} 进行中文配音合成...", TaskState.TTS, 0.0)
+            # --- STAGE 5: TTS (F5-TTS MLX 原人物声音克隆) ---
+            task.add_log("开始使用 F5-TTS MLX 进行原人物声音克隆与中文配音合成...", TaskState.TTS, 0.0)
 
-            tts_runner = TTSRunner(
-                engine_type=tts_engine_type,
-                voice_name=voice_name,
-                api_key=cfg.get("dashscope_api_key"),
-                endpoint=cfg.get("cosyvoice_endpoint"),
+            tts_runner = F5TTSCloneRunner(
                 ref_audio_path=task.speaker_ref.get("audio_path"),
                 ref_audio_text=task.speaker_ref.get("ref_text")
             )
@@ -258,7 +251,7 @@ class TaskManager:
                 progress_callback=lambda p, msg: task.add_log(msg, TaskState.TTS, p)
             )
             task.subtitles = subtitles_with_audio
-            task.add_log("全部分句配音合成完成！", TaskState.TTS, 100.0)
+            task.add_log("全部分句原声克隆配音合成完成！", TaskState.TTS, 100.0)
 
             # --- STAGE 6: FORCED ALIGNMENT & TIME-STRETCHING ---
             task.add_log("进行时间轴对齐、保调变速 (atempo) 与全轨缝合...", TaskState.ALIGNING, 0.0)

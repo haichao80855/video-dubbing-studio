@@ -165,24 +165,37 @@ class F5TTSMLXService:
 
             output_audio = np.concatenate(output_chunks, axis=0) if output_chunks else np.zeros((SAMPLE_RATE,))
 
-        # Write output wav
-        sf.write(output_path, output_audio, SAMPLE_RATE)
-        duration_sec = round(len(output_audio) / SAMPLE_RATE, 3)
+        # Ensure valid float values and apply Peak Normalization for loud, clear sound
+        output_audio = np.nan_to_num(output_audio, nan=0.0, posinf=0.0, neginf=0.0)
+        peak = float(np.max(np.abs(output_audio))) if len(output_audio) > 0 else 0.0
 
-        # Convert to standard 16kHz PCM WAV for alignment pipeline consistency
+        if peak > 0.005:
+            # Normalize peak to 0.92 (-0.7 dB) so speech is crisp, clear and loud
+            output_audio = output_audio * (0.92 / peak)
+        else:
+            logger.warning(f"Generated F5-TTS audio has near-zero amplitude (peak={peak})")
+
+        # Convert to 16-bit PCM for universal player & ffmpeg compatibility
+        output_audio_int16 = (np.clip(output_audio, -1.0, 1.0) * 32767.0).astype(np.int16)
+
+        # Write output 24kHz 16-bit PCM WAV
+        sf.write(output_path, output_audio_int16, SAMPLE_RATE, subtype='PCM_16')
+        duration_sec = round(len(output_audio_int16) / SAMPLE_RATE, 3)
+
+        # Resample to high-standard 48kHz PCM WAV for alignment and final video composition
         import subprocess
         from backend.config import FFMPEG_PATH
-        temp_16k = output_path + ".16k.wav"
+        temp_48k = output_path + ".48k.wav"
         cmd = [
             FFMPEG_PATH, "-y",
             "-i", output_path,
             "-acodec", "pcm_s16le",
-            "-ar", "16000",
-            "-ac", "1",
-            temp_16k
+            "-ar", "48000",
+            "-ac", "2",
+            temp_48k
         ]
         subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        if os.path.exists(temp_16k):
-            os.replace(temp_16k, output_path)
+        if os.path.exists(temp_48k):
+            os.replace(temp_48k, output_path)
 
         return duration_sec

@@ -2,12 +2,13 @@ import React, { useState } from "react";
 import {
   Link as LinkIcon,
   Play,
-  Volume2,
+  Mic,
   Subtitles,
   Sliders,
   CheckCircle2,
   AlertTriangle,
   Sparkles,
+  Cpu,
 } from "lucide-react";
 import { ConfigOptions, CreateTaskParams } from "../api/client";
 import { SettingsState } from "./SettingsModal";
@@ -28,8 +29,6 @@ export const UrlForm: React.FC<UrlFormProps> = ({
   isLoading,
 }) => {
   const [url, setUrl] = useState("");
-  const [ttsEngine, setTtsEngine] = useState("f5_tts_mlx");
-  const [voiceName, setVoiceName] = useState("clone");
   const [hardSub, setHardSub] = useState(true);
   const [autoPipeline, setAutoPipeline] = useState(false); // default: pause for review as requested
 
@@ -48,23 +47,14 @@ export const UrlForm: React.FC<UrlFormProps> = ({
 
     onSubmit({
       url: url.trim(),
-      tts_engine: ttsEngine,
-      voice_name: voiceName,
       hard_sub: hardSub,
       auto_pipeline: autoPipeline,
       asr_model: settings.asrModel,
       deepseek_model: settings.deepseekModel,
       deepseek_base_url: settings.deepseekBaseUrl,
       deepseek_api_key: settings.deepseekApiKey,
-      dashscope_api_key: settings.dashscopeApiKey,
-      cosyvoice_endpoint: settings.cosyvoiceEndpoint,
     });
   };
-
-  const currentVoices =
-    ttsEngine === "cosyvoice"
-      ? options?.cosyvoice_voices || []
-      : options?.edge_tts_voices || [];
 
   return (
     <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl backdrop-blur-sm">
@@ -103,88 +93,27 @@ export const UrlForm: React.FC<UrlFormProps> = ({
 
         {/* Configurations Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2">
-          {/* TTS Engine & Voice */}
-          <div className="space-y-3 p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <label className="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
-                <Volume2 className="w-4 h-4 text-blue-400" />
-                <span>中文配音模式</span>
+          {/* F5-TTS Voice Clone Card */}
+          <div className="space-y-3 p-4 rounded-2xl bg-slate-950/60 border border-blue-500/20">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-white flex items-center space-x-1.5">
+                <Mic className="w-4 h-4 text-blue-400" />
+                <span>原人物零样本声音克隆</span>
               </label>
-              <div className="flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-[11px] overflow-x-auto">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTtsEngine("f5_tts_mlx");
-                    setVoiceName("clone");
-                  }}
-                  className={`px-2 py-1 rounded-md transition whitespace-nowrap ${
-                    ttsEngine === "f5_tts_mlx"
-                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold shadow-sm"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  ✨ F5-TTS (原声克隆)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTtsEngine("edge_tts");
-                    setVoiceName("zh-CN-YunxiNeural");
-                  }}
-                  className={`px-2 py-1 rounded-md transition whitespace-nowrap ${
-                    ttsEngine === "edge_tts"
-                      ? "bg-blue-600 text-white font-medium"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  Edge TTS (免费标准)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTtsEngine("cosyvoice");
-                    setVoiceName("longxiaochun");
-                  }}
-                  className={`px-2 py-1 rounded-md transition whitespace-nowrap ${
-                    ttsEngine === "cosyvoice"
-                      ? "bg-blue-600 text-white font-medium"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  CosyVoice 3
-                </button>
-              </div>
+              <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30">
+                F5-TTS MLX
+              </span>
             </div>
 
-            {ttsEngine === "f5_tts_mlx" ? (
-              <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 space-y-1">
-                <p className="font-semibold flex items-center space-x-1.5 text-blue-200">
-                  <span>🎙️ 原人物零样本声音克隆已启用 (Apple Silicon Metal 加速)</span>
-                </p>
-                <p className="text-[11px] text-blue-300/80 leading-relaxed">
-                  系统将从原视频中自动截取 3~6 秒最清晰发言作为音色种子，由 DeepSeek 翻译的中文将完全以原作者声线和音色说出！您可在校对阶段试听或手动更换种子样本。
-                </p>
-              </div>
-            ) : (
-              <>
-                <select
-                  value={voiceName}
-                  onChange={(e) => setVoiceName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-blue-500 transition"
-                >
-                  {currentVoices.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[11px] text-slate-400">
-                  {ttsEngine === "edge_tts"
-                    ? "微软神经语音库，无需配置 Key，支持极速多线程合成"
-                    : "CosyVoice 3 自然情感表现力音色（需配置百炼 Key 或本地端点）"}
-                </p>
-              </>
-            )}
+            <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 space-y-1.5">
+              <p className="font-semibold flex items-center space-x-1.5 text-blue-200">
+                <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Apple Silicon Metal 硬件加速</span>
+              </p>
+              <p className="text-[11px] text-blue-300/80 leading-relaxed">
+                系统将自动从原视频中提取 3~6 秒最清晰发言作为音色种子，将 DeepSeek 翻译的中文完全用原人物声音与音色说出！您可在校对环节试听或手动更换种子样本。
+              </p>
+            </div>
           </div>
 
           {/* Subtitle & Pipeline Mode */}
@@ -198,7 +127,7 @@ export const UrlForm: React.FC<UrlFormProps> = ({
               {/* Review switch */}
               <label className="flex items-center justify-between cursor-pointer group">
                 <span className="text-xs text-slate-300 group-hover:text-white transition">
-                  翻译后暂停并在前端在线校对字幕
+                  翻译后暂停并在前端在线校对字幕与原声音色
                 </span>
                 <input
                   type="checkbox"
@@ -222,7 +151,7 @@ export const UrlForm: React.FC<UrlFormProps> = ({
               </label>
             </div>
             <p className="text-[11px] text-slate-400">
-              开启校对可在生成配音前微调文案与时间轴并在线试听单句发音
+              开启校对可在生成配音前试听原声音色种子、微调文案，并在线试听单句发音
             </p>
           </div>
         </div>
@@ -258,12 +187,12 @@ export const UrlForm: React.FC<UrlFormProps> = ({
             {isLoading ? (
               <>
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                <span>正在执行翻译与配音流水线...</span>
+                <span>正在执行原声克隆翻译流水线...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>开始全流程处理 (URL → MLX → Gemini → TTS → MP4)</span>
+                <span>开始原声克隆处理 (URL → ASR → DeepSeek → F5-TTS → 48kHz MP4)</span>
               </>
             )}
           </button>

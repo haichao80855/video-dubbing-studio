@@ -47,6 +47,13 @@ export interface SpeakerRef {
   audio_path: string;
 }
 
+export interface SpeakerCandidate {
+  id: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
 export interface TaskStatus {
   task_id: string;
   state:
@@ -84,6 +91,7 @@ export interface CreateTaskParams {
   deepseek_base_url?: string;
   deepseek_api_key: string;
   tts_speed_mode?: string;
+  tts_speaking_rate?: number;
 }
 
 export interface LLMTestResult {
@@ -158,7 +166,12 @@ export async function confirmSubtitles(taskId: string, subtitles: SubtitleItem[]
   }
 }
 
-export async function fetchSpeakerRef(taskId: string): Promise<{ task_id: string; speaker_ref: SpeakerRef }> {
+export async function fetchSpeakerRef(taskId: string): Promise<{
+  task_id: string;
+  speaker_ref: SpeakerRef;
+  segments: SpeakerCandidate[];
+  tts_speaking_rate: number;
+}> {
   const res = await fetch(`${API_BASE}/api/tasks/${taskId}/speaker-ref`);
   if (!res.ok) throw new Error("获取原声参考切片失败");
   return res.json();
@@ -183,13 +196,19 @@ export async function previewTTSAudio(params: {
   ref_audio_path?: string;
   ref_audio_text?: string;
   speed_mode?: string;
+  subtitle_id?: number;
+  target_duration?: number;
+  speaking_rate?: number;
 }): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/tts/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(params),
   });
-  if (!res.ok) throw new Error("试听生成失败");
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: "试听生成失败" }));
+    throw new Error(error.detail || "试听生成失败");
+  }
   return res.blob();
 }
 

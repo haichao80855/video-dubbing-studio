@@ -74,8 +74,8 @@ class SentenceMerger:
             elif accumulated_dur >= self.target_duration and (is_terminal or gap_to_next > 0.6):
                 # Reached target length at natural pause or clause
                 should_split = True
-            elif gap_to_next > 1.2 and accumulated_dur >= 4.0:
-                # Significant speaker topic pause in original video
+            elif gap_to_next > 1.2:
+                # Keep scene/demo pauses even after a short instruction.
                 should_split = True
 
             if should_split and current_group:

@@ -32,7 +32,7 @@ def wrap_subtitle_text(text: str) -> str:
 class VideoComposer:
     """
     Composites dubbed audio, subtitles, and video stream into final Chinese MP4.
-    Guarantees strict PTS timestamp alignment for perfect A/V lip synchronization.
+    Normalizes stream timestamps after speech has been aligned to source segments.
     """
 
     def __init__(self, task_dir: Path, task_id: str):
@@ -89,7 +89,7 @@ class VideoComposer:
         if hard_sub:
             # Complex filter chaining: burned subtitles + video PTS reset, and audio PTS reset + 48kHz stereo formatting
             filter_complex = (
-                f"[0:v]subtitles=filename='{escaped_srt}':force_style='FontSize=22,FontName=Arial,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=25',setpts=PTS-STARTPTS[v];"
+                f"[0:v]setpts=PTS-STARTPTS,subtitles=filename='{escaped_srt}':force_style='FontSize=22,FontName=Arial,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=25'[v];"
                 f"[1:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a]"
             )
             cmd = [
@@ -139,30 +139,15 @@ class VideoComposer:
         if res.returncode != 0:
             err = res.stderr.decode("utf-8", errors="ignore")
             logger.error(f"FFmpeg composition failed: {err}")
-            # Fallback retry without filter_complex if complex filter had compatibility issue
-            retry_cmd = [
-                FFMPEG_PATH, "-y",
-                "-i", video_path,
-                "-i", audio_path,
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-c:v", "copy",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ar", "48000",
-                "-ac", "2",
-                output_mp4
-            ]
-            retry_res = subprocess.run(retry_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if retry_res.returncode != 0:
-                raise RuntimeError(f"FFmpeg 合成最终视频失败: {retry_res.stderr.decode('utf-8', errors='ignore')}")
+            # A fallback without these filters would lose timestamp normalization/subtitles.
+            raise RuntimeError(f"FFmpeg 合成失败，请检查字幕滤镜与编码器: {err[-2000:]}")
 
         # Post-check: verify output MP4 file exists and has size
         if not os.path.exists(output_mp4) or os.path.getsize(output_mp4) < 10000:
             raise RuntimeError(f"合成的 MP4 文件异常或大小为零: {output_mp4}")
 
         if progress_callback:
-            progress_callback(100.0, "最终中文 MP4 视频合成完毕！(声画毫秒级对齐，48kHz 立体声)")
+            progress_callback(100.0, "中文 MP4 合成完成，配音已按原句时间轴定位 (48kHz 立体声)")
 
         return {
             "output_mp4": output_mp4,

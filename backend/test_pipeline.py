@@ -66,8 +66,8 @@ async def test_dubbing_core():
     assert "\n" in wrapped, "Subtitle was not wrapped at comma"
     print("✓ Subtitle wrapping verified.")
 
-    # 3. Test Audio Generation & Alignment in 48kHz Stereo with Absolute Timestamp Overlay & Silence Compression
-    print("\n3. Testing 48kHz Stereo Alignment & Smart Silence Compression...")
+    # 3. Test 48kHz stereo with source timestamps and preserved pauses.
+    print("\n3. Testing 48kHz Stereo Alignment & Preserved Source Pauses...")
     tts_dir = test_task_dir / "tts_clips"
     tts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -75,8 +75,8 @@ async def test_dubbing_core():
     clip2_path = str(tts_dir / "clip_0002.wav")
     clip3_path = str(tts_dir / "clip_0003.wav")
 
-    # Clip 1: Intentionally long (2.8s) for a 1.5s slot (to test overflow containment & atempo)
-    tone1 = Sine(440).to_audio_segment(duration=2800).set_frame_rate(48000).set_channels(2)
+    # Clip 1: Slight overflow (1.55s) for a 1.5s slot; only mild tempo fitting is allowed.
+    tone1 = Sine(440).to_audio_segment(duration=1550).set_frame_rate(48000).set_channels(2)
     tone1.export(clip1_path, format="wav")
 
     # Clip 2: 1.8s for 2.0s slot (starts at 3.0s)
@@ -95,7 +95,7 @@ async def test_dubbing_core():
             "text": "Intentionally long sentence",
             "translated_text": "第一句故意很长用来测试溢出不推迟后续句子",
             "audio_path": clip1_path,
-            "tts_duration": 2.8
+            "tts_duration": 1.55
         },
         {
             "id": 2,
@@ -149,13 +149,13 @@ async def test_dubbing_core():
     gen_video_cmd = [
         FFMPEG_PATH, "-y",
         "-f", "lavfi",
-        "-i", "color=c=navy:s=1280x720:d=6:r=30",
+        "-i", "color=c=navy:s=1280x720:d=8:r=30",
         "-c:v", "libx264",
         "-pix_fmt", "yuv420p",
         test_video
     ]
     subprocess.run(gen_video_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    print("  Created 6-second synthetic test video.")
+    print("  Created 8-second synthetic test video.")
 
     composer = VideoComposer(task_dir=test_task_dir, task_id="test_task")
     res = composer.compose_video(

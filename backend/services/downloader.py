@@ -2,6 +2,7 @@ import os
 import subprocess
 import json
 import logging
+import math
 from typing import Dict, Any, Callable, Optional
 from pathlib import Path
 import yt_dlp
@@ -67,6 +68,25 @@ class VideoDownloader:
         
         raw_video_path = downloaded_files[0]
         audio_wav_path = self.task_dir / "audio_16k.wav"
+
+        # Use the downloaded media's duration rather than rounded website metadata.
+        probe = subprocess.run(
+            [FFPROBE_PATH, "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=duration:format=duration", "-of", "json", str(raw_video_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if probe.returncode == 0:
+            try:
+                media = json.loads(probe.stdout)
+                measured = media.get("streams", [{}])[0].get("duration")
+                measured = measured if measured not in (None, "N/A") else media.get("format", {}).get("duration")
+                measured = float(measured)
+                if math.isfinite(measured) and measured > 0:
+                    duration = measured
+            except (ValueError, TypeError, IndexError):
+                logger.warning("Could not read media duration; using site metadata")
+        if not math.isfinite(float(duration)) or float(duration) <= 0:
+            raise ValueError("无法确定视频时长，不能进行音画对齐")
 
         if self.progress_callback:
             self.progress_callback(95.0, "提取 16kHz 高保真语音轨...")

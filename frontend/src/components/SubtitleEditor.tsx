@@ -15,6 +15,7 @@ import {
 import {
   SubtitleItem,
   SpeakerRef,
+  SpeakerCandidate,
   previewTTSAudio,
   confirmSubtitles,
   fetchSpeakerRef,
@@ -41,6 +42,8 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
 }) => {
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>(initialSubtitles);
   const [speakerRef, setSpeakerRef] = useState<SpeakerRef | null>(null);
+  const [speakerCandidates, setSpeakerCandidates] = useState<SpeakerCandidate[]>([]);
+  const [speakingRate, setSpeakingRate] = useState(3.8);
   const [audioVersion, setAudioVersion] = useState(0);
   const [previewingId, setPreviewingId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -56,6 +59,8 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
       fetchSpeakerRef(taskId)
         .then((res) => {
           setSpeakerRef(res.speaker_ref);
+          setSpeakerCandidates(res.segments);
+          setSpeakingRate(res.tts_speaking_rate);
         })
         .catch((err) => console.warn("Fetch speaker ref error:", err));
     }
@@ -91,6 +96,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
       const blob = await previewTTSAudio({
         text: item.translated_text || item.original_text || "",
         task_id: taskId,
+        subtitle_id: item.id,
       });
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -198,9 +204,9 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
                 onChange={(e) => handleSwitchSpeakerRef(Number(e.target.value))}
                 className="px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-slate-100 focus:outline-none focus:border-blue-500 transition max-w-[220px]"
               >
-                {subtitles.map((s) => (
+                {speakerCandidates.map((s) => (
                   <option key={s.id} value={s.id}>
-                    #{s.id} ({(s.end - s.start).toFixed(1)}s): {s.original_text?.slice(0, 18)}...
+                    #{s.id} ({(s.end - s.start).toFixed(1)}s): {s.text.slice(0, 18)}...
                   </option>
                 ))}
               </select>
@@ -235,8 +241,8 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
         <div className="flex-1 overflow-y-auto p-6 space-y-3 bg-slate-950/40">
           {subtitles.map((item) => {
             const duration = Math.max(0.1, item.end - item.start);
-            const maxChars = Math.max(3, Math.round(duration * 3.8));
-            const charCount = (item.translated_text || "").length;
+            const maxChars = Math.max(1, Math.floor(duration * speakingRate));
+            const charCount = Array.from(item.translated_text || "").filter((char) => /[\p{L}\p{N}]/u.test(char)).length;
             const charsPerSec = charCount / duration;
             const isSevereOverflow = charCount > maxChars * 1.25;
             const isWarningOverflow = charCount > maxChars && !isSevereOverflow;
@@ -285,7 +291,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
                         ? " · 严重超字 (将引发脱节)"
                         : isWarningOverflow
                         ? " · 偏多 (配音略急促)"
-                        : " · 完美卡点"}
+                        : " · 字数合适"}
                     </span>
 
                     {/* Audition Button */}
@@ -329,7 +335,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
         {/* Footer */}
         <div className="px-6 py-4 bg-slate-900 border-t border-slate-800 flex items-center justify-between">
           <span className="text-xs text-slate-400">
-            提示：调整字数使其与原时长相近，合成出的配音与唇形画面最契合
+            提示：每句保留原视频起点；文案过长时请精简，避免急促朗读或超出时间窗口
           </span>
           <div className="flex space-x-3">
             <button

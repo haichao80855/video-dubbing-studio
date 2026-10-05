@@ -33,6 +33,7 @@ export const UrlForm: React.FC<UrlFormProps> = ({
   const [hardSub, setHardSub] = useState(true);
   const [autoPipeline, setAutoPipeline] = useState(false); // default: pause for review as requested
   const [ttsSpeedMode, setTtsSpeedMode] = useState("balanced"); // balanced (Euler 8) vs fast (Euler 6) vs quality (Midpoint 8)
+  const [speakingRate, setSpeakingRate] = useState(3.8);
 
   // Detect platform
   const isBilibili = url.includes("bilibili.com") || url.includes("b23.tv");
@@ -56,6 +57,7 @@ export const UrlForm: React.FC<UrlFormProps> = ({
       deepseek_base_url: settings.deepseekBaseUrl,
       deepseek_api_key: settings.deepseekApiKey,
       tts_speed_mode: ttsSpeedMode,
+      tts_speaking_rate: speakingRate,
     });
   };
 
@@ -157,6 +159,25 @@ export const UrlForm: React.FC<UrlFormProps> = ({
                   : "⚡️ 极速平衡 (Euler 8步·推荐)：音质与速度兼顾，相比旧版提速3.5倍！"}
               </p>
             </div>
+          </div>
+
+          <div className="space-y-2 p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80">
+            <label htmlFor="speaking-rate" className="text-xs font-semibold text-slate-300">
+              朗读语速：{speakingRate.toFixed(1)} 字/秒
+            </label>
+            <input
+              id="speaking-rate"
+              type="range"
+              min="2.5"
+              max="4.5"
+              step="0.1"
+              value={speakingRate}
+              onChange={(event) => setSpeakingRate(Number(event.target.value))}
+              className="w-full accent-blue-500"
+            />
+            <p className="text-[11px] text-slate-400">
+              默认 3.8 字/秒；觉得急促可调低。试听与最终配音使用同一语速，并保留原视频停顿。
+            </p>
           </div>
 
           {/* Subtitle & Pipeline Mode */}

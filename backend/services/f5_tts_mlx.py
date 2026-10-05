@@ -1,24 +1,27 @@
 import os
-import sys
 import logging
-import datetime
-from pathlib import Path
-from typing import Optional, List
+import math
+from typing import Optional
 import numpy as np
 import soundfile as sf
 import scipy.signal as signal
-import mlx.core as mx
+from backend.services.pacing import (
+    DEFAULT_SPEAKING_RATE, duration_frames_for_speech, resolve_speech_duration,
+)
 
 # Fix MLX 0.22+ nanobind compatibility with f5_tts_mlx:
 # f5_tts_mlx passes (self.num_channels, dur) where dur is an mx.array(dtype=float32),
 # but MLX 0.22+ strictly expects Sequence[int], raising TypeError: normal(): incompatible function arguments.
-_orig_mx_random_normal = mx.random.normal
-def _safe_mx_random_normal(shape=None, *args, **kwargs):
-    if shape is not None and isinstance(shape, (tuple, list)):
-        shape = [int(x.item() if hasattr(x, 'item') else int(x)) for x in shape]
-    return _orig_mx_random_normal(shape, *args, **kwargs)
-
-mx.random.normal = _safe_mx_random_normal
+def _patch_random_shapes(mx):
+    original = mx.random.normal
+    if getattr(original, "_vds_integer_shapes", False):
+        return
+    def safe_normal(shape=None, *args, **kwargs):
+        if shape is not None and isinstance(shape, (tuple, list)):
+            shape = [int(x.item() if hasattr(x, "item") else x) for x in shape]
+        return original(shape, *args, **kwargs)
+    safe_normal._vds_integer_shapes = True
+    mx.random.normal = safe_normal
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,8 @@ class F5TTSModelHolder:
 
     @classmethod
     def get_model(cls, model_name: str = "lucasnewman/f5-tts-mlx"):
+        import mlx.core as mx
+        _patch_random_shapes(mx)
         if cls._model is None or cls._model_name != model_name:
             from f5_tts_mlx import F5TTS
 
@@ -67,6 +72,7 @@ class F5TTSMLXService:
         self._cached_ref_path = None
 
     def _load_reference_audio(self, ref_path: str):
+        import mlx.core as mx
         if self._cached_ref_path == ref_path and self._cached_ref_audio is not None:
             return self._cached_ref_audio
 
@@ -102,25 +108,33 @@ class F5TTSMLXService:
         speed_mode: str = "balanced",
         steps: Optional[int] = None,
         speed: float = 1.0,
+        target_duration: Optional[float] = None,
+        speaking_rate: float = DEFAULT_SPEAKING_RATE,
     ) -> float:
         """
         Synthesizes text into cloned speech using Euler/Midpoint flow matching.
         Produces 48kHz Stereo 16-bit PCM WAV in memory (3~5x faster than RK4).
         """
-        from f5_tts_mlx.generate import convert_char_to_pinyin, estimated_duration
+        if not math.isfinite(speed) or speed <= 0:
+            raise ValueError("朗读速度倍率必须为正数")
+        clean_text = text.strip()
+        speech_duration = resolve_speech_duration(
+            clean_text, target_duration, speaking_rate * speed,
+        )
+
+        import mlx.core as mx
+        from f5_tts_mlx.generate import convert_char_to_pinyin
 
         target_ref_path = ref_audio_path or self.ref_audio_path
         target_ref_text = ref_audio_text or self.ref_audio_text
 
         if not target_ref_path or not os.path.exists(target_ref_path):
             raise FileNotFoundError(f"声音克隆所需的参考音频不存在: {target_ref_path}")
+        if not target_ref_text.strip():
+            raise ValueError("参考音频需要对应的准确原文，不能使用空文本")
 
         f5tts = F5TTSModelHolder.get_model(self.model_name)
         ref_audio = self._load_reference_audio(target_ref_path)
-
-        clean_text = text.strip()
-        if not clean_text:
-            clean_text = "..."
 
         # Configure ODE solver and steps based on speed_mode
         # Euler 8 steps provides 3.5x speedup with near-identical audio fidelity
@@ -135,7 +149,7 @@ class F5TTSMLXService:
             ode_method = "euler"
             ode_steps = steps or 8
 
-        duration_frames = int(estimated_duration(ref_audio, target_ref_text, clean_text, speed) * FRAMES_PER_SEC)
+        duration_frames = duration_frames_for_speech(ref_audio.shape[0], speech_duration)
         full_text = convert_char_to_pinyin([target_ref_text + " " + clean_text])
 
         # Single-pass Flow Matching sampling
@@ -145,7 +159,7 @@ class F5TTSMLXService:
             duration=duration_frames,
             steps=ode_steps,
             method=ode_method,
-            speed=speed,
+            speed=1.0,  # Duration already accounts for the requested speaking rate.
             cfg_strength=2.0,
             sway_sampling_coef=-1.0,
         )
@@ -162,7 +176,7 @@ class F5TTSMLXService:
             # Normalize peak to 0.92 (-0.7 dB) so speech is crisp, clear and loud
             output_audio = output_audio * (0.92 / peak)
         else:
-            logger.warning(f"Generated F5-TTS audio has near-zero amplitude (peak={peak})")
+            raise RuntimeError(f"F5-TTS 生成的音频为空或无声 (peak={peak})，请重新选择参考音频")
 
         # In-memory upsampling from 24kHz to 48kHz Stereo (< 5ms, zero subprocess overhead!)
         audio_48k = signal.resample_poly(output_audio, 2, 1)

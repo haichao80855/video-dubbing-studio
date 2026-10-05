@@ -2,13 +2,14 @@ import os
 import json
 import asyncio
 import logging
+import uuid
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.config import (
     OUTPUTS_DIR,
@@ -20,6 +21,8 @@ from backend.config import (
 from backend.core.task_manager import task_manager, TaskState
 from backend.services.translator import DeepSeekTranslator
 from backend.services.f5_tts_mlx import F5TTSMLXService
+from backend.services.aligner import AudioAligner
+from backend.services.pacing import DEFAULT_SPEAKING_RATE, resolve_speech_duration
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("app")
@@ -48,6 +51,7 @@ class CreateTaskRequest(BaseModel):
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_api_key: str
     tts_speed_mode: str = "balanced"
+    tts_speaking_rate: float = Field(default=DEFAULT_SPEAKING_RATE, ge=2.5, le=4.5)
 
 class TestLLMRequest(BaseModel):
     api_key: str
@@ -73,7 +77,10 @@ class PreviewTTSRequest(BaseModel):
     task_id: Optional[str] = None
     ref_audio_path: Optional[str] = None
     ref_audio_text: Optional[str] = None
-    speed_mode: str = "balanced"
+    subtitle_id: Optional[int] = None
+    speed_mode: Optional[str] = None
+    target_duration: Optional[float] = Field(default=None, gt=0)
+    speaking_rate: Optional[float] = Field(default=None, ge=2.5, le=4.5)
 
 
 @app.get("/api/health")
@@ -202,9 +209,16 @@ async def get_speaker_ref(task_id: str):
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
+    candidates = [s for s in task.source_segments if 3 <= s["end"] - s["start"] <= 8]
+    if not candidates:
+        candidates = [s for s in task.source_segments if 2 <= s["end"] - s["start"] <= 10]
+    if not candidates:
+        candidates = task.source_segments[:1]
     return {
         "task_id": task.task_id,
-        "speaker_ref": task.speaker_ref
+        "speaker_ref": task.speaker_ref,
+        "segments": [{key: s[key] for key in ("id", "start", "end", "text")} for s in candidates],
+        "tts_speaking_rate": task.config.get("tts_speaking_rate", DEFAULT_SPEAKING_RATE),
     }
 
 @app.get("/api/tasks/{task_id}/speaker-ref/audio")
@@ -233,11 +247,24 @@ async def confirm_subtitles(task_id: str, req: ConfirmSubtitlesRequest):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     if task.state != TaskState.WAITING_REVIEW:
-        # If not waiting, just update subtitles
-        pass
+        raise HTTPException(status_code=409, detail="任务当前不处于字幕校对阶段")
 
     # Update subtitles with user edits
-    updated = [item.model_dump() for item in req.subtitles]
+    edited = {item.id: item for item in req.subtitles}
+    if len(edited) != len(req.subtitles) or set(edited) != {item["id"] for item in task.subtitles}:
+        raise HTTPException(status_code=400, detail="字幕段落不能重复或遗漏")
+    updated = []
+    for original in task.subtitles:
+        text = edited[original["id"]].translated_text.strip()
+        try:
+            resolve_speech_duration(
+                text, original["end"] - original["start"],
+                task.config.get("tts_speaking_rate", DEFAULT_SPEAKING_RATE),
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=f"段落 #{original['id']}: {error}") from error
+        # Preserve source anchors, transcript and subsegments when saving edits.
+        updated.append({**original, "translated_text": text})
     task.subtitles = updated
     task.save_state()
 
@@ -254,17 +281,31 @@ async def preview_tts(req: PreviewTTSRequest):
     """Generates a small audio snippet for audition in the web UI using F5-TTS voice clone."""
     temp_preview_dir = TASKS_DIR / "previews"
     temp_preview_dir.mkdir(parents=True, exist_ok=True)
-    preview_file = temp_preview_dir / f"preview_{abs(hash(req.text + str(req.task_id))) % 1000000}.wav"
+    preview_dir = temp_preview_dir / uuid.uuid4().hex
+    preview_dir.mkdir()
+    preview_file = preview_dir / "preview.wav"
 
     try:
         loop = asyncio.get_running_loop()
         ref_audio = req.ref_audio_path
         ref_text = req.ref_audio_text
+        target_duration = req.target_duration
+        speaking_rate = req.speaking_rate
+        speed_mode = req.speed_mode
         if req.task_id:
             task = task_manager.get_task(req.task_id)
-            if task and task.speaker_ref:
+            if not task:
+                raise HTTPException(status_code=404, detail="任务不存在")
+            speaking_rate = speaking_rate if speaking_rate is not None else task.config.get("tts_speaking_rate", DEFAULT_SPEAKING_RATE)
+            speed_mode = speed_mode or task.config.get("tts_speed_mode", "balanced")
+            if task.speaker_ref:
                 ref_audio = task.speaker_ref.get("audio_path")
                 ref_text = task.speaker_ref.get("ref_text")
+            if req.subtitle_id is not None:
+                segment = next((s for s in task.subtitles if s["id"] == req.subtitle_id), None)
+                if not segment:
+                    raise HTTPException(status_code=404, detail="字幕段落不存在")
+                target_duration = segment["end"] - segment["start"]
 
         if not ref_audio or not os.path.exists(ref_audio):
             raise ValueError("未找到用于克隆的声音参考切片，请确认任务是否已提取原声")
@@ -272,10 +313,23 @@ async def preview_tts(req: PreviewTTSRequest):
         service = F5TTSMLXService(ref_audio_path=ref_audio, ref_audio_text=ref_text)
         await loop.run_in_executor(
             None,
-            lambda: service.synthesize(req.text, str(preview_file), speed_mode=req.speed_mode)
+            lambda: service.synthesize(
+                req.text, str(preview_file), speed_mode=speed_mode or "balanced",
+                target_duration=target_duration,
+                speaking_rate=speaking_rate if speaking_rate is not None else DEFAULT_SPEAKING_RATE,
+            )
         )
 
+        if target_duration is not None:
+            _, fitted_path = await loop.run_in_executor(
+                None, lambda: AudioAligner(preview_dir).prepare_clip(str(preview_file), target_duration, 0)
+            )
+            return FileResponse(fitted_path, media_type="audio/wav")
         return FileResponse(str(preview_file), media_type="audio/wav")
+    except HTTPException:
+        raise
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as e:
         logger.error(f"Preview TTS error: {e}")
         raise HTTPException(status_code=500, detail=f"试听生成失败: {str(e)}")

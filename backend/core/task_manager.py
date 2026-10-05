@@ -50,6 +50,7 @@ class Task:
         self.speaker_ref: Dict[str, Any] = {}
         self.subscribers: List[asyncio.Queue] = []
         self.review_event = asyncio.Event()
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
 
     def add_log(self, message: str, stage: str, progress: float):
         self.state = stage
@@ -64,7 +65,7 @@ class Task:
         self.logs.append(entry)
         self.save_state()
 
-        # Push to all SSE subscribers
+        # Push to all SSE subscribers safely across worker threads
         event_data = {
             "type": "progress",
             "task_id": self.task_id,
@@ -75,7 +76,10 @@ class Task:
         }
         for q in list(self.subscribers):
             try:
-                q.put_nowait(event_data)
+                if self.loop and self.loop.is_running():
+                    self.loop.call_soon_threadsafe(q.put_nowait, event_data)
+                else:
+                    q.put_nowait(event_data)
             except Exception:
                 pass
 
@@ -142,6 +146,8 @@ class TaskManager:
     async def run_pipeline(self, task: Task):
         """Asynchronously executes the video dubbing pipeline."""
         try:
+            loop = asyncio.get_running_loop()
+            task.loop = loop
             cfg = task.config
             url = cfg.get("url", "").strip()
             if not url:

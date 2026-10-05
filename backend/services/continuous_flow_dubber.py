@@ -188,9 +188,6 @@ class ContinuousFlowDubber:
         Completely eliminates 1-second awkward gaps.
         Returns: (final_audio_path, updated_subtitles_with_exact_timing)
         """
-        import asyncio
-        loop = asyncio.get_event_loop() if asyncio.get_event_loop().is_running() else None
-
         total = len(subtitles)
         full_track = AudioSegment.silent(duration=0, frame_rate=48000).set_channels(2)
 

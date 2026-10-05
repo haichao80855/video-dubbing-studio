@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Header } from "./components/Header";
 import { SettingsModal, SettingsState } from "./components/SettingsModal";
 import { UrlForm } from "./components/UrlForm";
@@ -45,6 +45,7 @@ export const App: React.FC = () => {
   // Review Modal State
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [reviewSubtitles, setReviewSubtitles] = useState<SubtitleItem[]>([]);
+  const confirmedReviewTask = useRef<string | null>(null);
   const [lastSubmittedParams, setLastSubmittedParams] = useState<CreateTaskParams | null>(null);
 
   // Load config options on mount
@@ -64,12 +65,57 @@ export const App: React.FC = () => {
     if (!currentTaskId) return;
 
     let unsub: (() => void) | null = null;
+    let active = true;
+    let latestStage: TaskStatus["state"] = "PENDING";
+    let statusVersion = 0;
+    let reviewLoaded = false;
+    let reviewLoading = false;
+
+    const canReview = () => active && latestStage === "WAITING_REVIEW" &&
+      confirmedReviewTask.current !== currentTaskId;
+
+    const updateStage = (stage: TaskStatus["state"]) => {
+      if (!active || (stage === "WAITING_REVIEW" && confirmedReviewTask.current === currentTaskId)) return false;
+      latestStage = stage;
+      statusVersion += 1;
+      if (["TTS", "ALIGNING", "COMPOSING", "COMPLETED", "FAILED"].includes(stage)) {
+        confirmedReviewTask.current = currentTaskId;
+        setIsReviewOpen(false);
+      }
+      return true;
+    };
+
+    const loadReview = async (subtitles?: SubtitleItem[]) => {
+      if (!canReview() || reviewLoaded) return;
+      // review_ready may supply data while the REST request is still in flight.
+      if (subtitles) {
+        reviewLoaded = true;
+        setReviewSubtitles(subtitles);
+        setIsReviewOpen(true);
+        return;
+      }
+      if (reviewLoading) return;
+      reviewLoading = true;
+      try {
+        const res = await fetchSubtitles(currentTaskId);
+        if (!canReview() || reviewLoaded || res.state !== "WAITING_REVIEW") return;
+        reviewLoaded = true;
+        setReviewSubtitles(res.subtitles);
+        setIsReviewOpen(true);
+      } catch (err) {
+        console.warn("Failed to load subtitles:", err);
+      } finally {
+        reviewLoading = false;
+      }
+    };
 
     const startStream = () => {
       unsub = connectTaskSSE(
         currentTaskId,
         (event) => {
+          if (!active) return;
           if (event.type === "init") {
+            if (!updateStage(event.state)) return;
             setTaskStatus((prev) => ({
               ...prev,
               task_id: event.task_id,
@@ -81,7 +127,9 @@ export const App: React.FC = () => {
               result: event.result,
               subtitles_count: (event.logs || []).length,
             }));
+            void loadReview();
           } else if (event.type === "progress") {
+            if (!updateStage(event.stage)) return;
             setTaskStatus((prev) => {
               if (!prev) return null;
               const newLogs = event.log ? [...prev.logs, event.log] : prev.logs;
@@ -94,17 +142,11 @@ export const App: React.FC = () => {
               };
             });
 
-            // If entering WAITING_REVIEW, fetch subtitles and open editor
-            if (event.stage === "WAITING_REVIEW") {
-              fetchSubtitles(currentTaskId).then((res) => {
-                setReviewSubtitles(res.subtitles);
-                setIsReviewOpen(true);
-              });
-            }
+            void loadReview();
           } else if (event.type === "review_ready") {
-            setReviewSubtitles(event.subtitles || []);
-            setIsReviewOpen(true);
+            void loadReview(event.subtitles);
           } else if (event.type === "completed") {
+            if (!updateStage("COMPLETED")) return;
             setTaskStatus((prev) =>
               prev
                 ? {
@@ -118,6 +160,7 @@ export const App: React.FC = () => {
             );
             setIsLoading(false);
           } else if (event.type === "error") {
+            if (!updateStage("FAILED")) return;
             setTaskStatus((prev) =>
               prev
                 ? {
@@ -141,14 +184,13 @@ export const App: React.FC = () => {
 
     // Polling fallback every 3 seconds to guarantee freshness
     const interval = setInterval(async () => {
+      const requestVersion = statusVersion;
       try {
         const s = await fetchTaskStatus(currentTaskId);
+        // SSE may have advanced the task while this polling request was in flight.
+        if (!active || requestVersion !== statusVersion || !updateStage(s.state)) return;
         setTaskStatus(s);
-        if (s.state === "WAITING_REVIEW" && reviewSubtitles.length === 0) {
-          const subs = await fetchSubtitles(currentTaskId);
-          setReviewSubtitles(subs.subtitles);
-          setIsReviewOpen(true);
-        }
+        void loadReview();
         if (s.state === "COMPLETED" || s.state === "FAILED") {
           setIsLoading(false);
           clearInterval(interval);
@@ -157,6 +199,7 @@ export const App: React.FC = () => {
     }, 3000);
 
     return () => {
+      active = false;
       if (unsub) unsub();
       clearInterval(interval);
     };
@@ -167,6 +210,9 @@ export const App: React.FC = () => {
       setIsLoading(true);
       setLastSubmittedParams(params);
       const res = await createTask(params);
+      confirmedReviewTask.current = null;
+      setIsReviewOpen(false);
+      setReviewSubtitles([]);
       setCurrentTaskId(res.task_id);
       setTaskStatus({
         task_id: res.task_id,
@@ -188,6 +234,7 @@ export const App: React.FC = () => {
     setIsLoading(false);
     setIsReviewOpen(false);
     setReviewSubtitles([]);
+    confirmedReviewTask.current = null;
   };
 
   return (
@@ -244,7 +291,11 @@ export const App: React.FC = () => {
           <div className="space-y-6">
             <Progress
               taskStatus={taskStatus}
-              onOpenReviewModal={() => setIsReviewOpen(true)}
+              onOpenReviewModal={() => {
+                if (taskStatus.state === "WAITING_REVIEW" && confirmedReviewTask.current !== currentTaskId) {
+                  setIsReviewOpen(true);
+                }
+              }}
             />
           </div>
         )}
@@ -267,7 +318,11 @@ export const App: React.FC = () => {
           initialSubtitles={reviewSubtitles}
           settings={settings}
           onConfirmed={() => {
+            confirmedReviewTask.current = currentTaskId;
             setIsReviewOpen(false);
+            setTaskStatus((prev) => prev?.task_id === currentTaskId && prev.state === "WAITING_REVIEW"
+              ? { ...prev, state: "TTS", progress: 0, message: "字幕已确认，开始原声克隆配音..." }
+              : prev);
           }}
         />
       )}

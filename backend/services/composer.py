@@ -3,7 +3,7 @@ import subprocess
 import logging
 from typing import List, Dict, Any, Optional, Callable
 from pathlib import Path
-from backend.config import FFMPEG_PATH, FFPROBE_PATH, OUTPUTS_DIR
+from backend.config import FFMPEG_PATH, OUTPUTS_DIR, select_composition_ffmpeg
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class VideoComposer:
         subtitles: List[Dict[str, Any]],
         hard_sub: bool = True,
         progress_callback: Optional[Callable[[float, str], None]] = None
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Muxes video and Chinese audio track with exact PTS reset to eliminate any container-level desync.
         """
@@ -77,23 +77,42 @@ class VideoComposer:
         with open(srt_path, "r", encoding="utf-8") as src, open(output_srt, "w", encoding="utf-8") as dst:
             dst.write(src.read())
 
-        if progress_callback:
-            progress_callback(30.0, f"正在进行音画时钟精准对齐与 FFmpeg 封装 (硬字幕={hard_sub})...")
-
         # Ensure audio_path is valid and non-empty
         if not os.path.exists(audio_path) or os.path.getsize(audio_path) < 4096:
             raise RuntimeError(f"合成所需的配音音轨文件异常或为空: {audio_path}")
 
+        ffmpeg_path, use_hard_sub = select_composition_ffmpeg(FFMPEG_PATH, hard_sub)
+        warnings = []
+        if hard_sub and not use_hard_sub:
+            warning = "FFmpeg 缺少字幕压制滤镜，已改为可切换软字幕；请用支持字幕轨道的播放器打开 MP4，或下载 SRT 字幕。"
+            warnings.append(warning)
+            logger.warning(warning)
+            if progress_callback:
+                progress_callback(20.0, warning)
+        if progress_callback:
+            progress_callback(30.0, f"正在进行音画时钟精准对齐与 FFmpeg 封装 ({'硬' if use_hard_sub else '软'}字幕)...")
+
+        # Browsers often cannot display an MP4 mov_text track. Supply WebVTT for preview.
+        vtt_filename = f"subtitles_{self.task_id}.vtt" if not use_hard_sub else None
+        if vtt_filename:
+            with open(OUTPUTS_DIR / vtt_filename, "w", encoding="utf-8") as vtt:
+                vtt.write("WEBVTT\n\n")
+                for item in subtitles:
+                    start = format_timestamp_srt(item["start"]).replace(",", ".")
+                    end = format_timestamp_srt(item["end"]).replace(",", ".")
+                    text = item.get("translated_text", "").strip() or item.get("text", "").strip()
+                    vtt.write(f"{start} --> {end}\n{wrap_subtitle_text(text)}\n\n")
+
         escaped_srt = srt_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
-        if hard_sub:
+        if use_hard_sub:
             # Complex filter chaining: burned subtitles + video PTS reset, and audio PTS reset + 48kHz stereo formatting
             filter_complex = (
                 f"[0:v]setpts=PTS-STARTPTS,subtitles=filename='{escaped_srt}':force_style='FontSize=22,FontName=Arial,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1,MarginV=25'[v];"
                 f"[1:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a]"
             )
             cmd = [
-                FFMPEG_PATH, "-y",
+                ffmpeg_path, "-y",
                 "-i", video_path,
                 "-i", audio_path,
                 "-filter_complex", filter_complex,
@@ -114,7 +133,7 @@ class VideoComposer:
                 "[1:a]asetpts=PTS-STARTPTS,aformat=sample_rates=48000:channel_layouts=stereo[a]"
             )
             cmd = [
-                FFMPEG_PATH, "-y",
+                ffmpeg_path, "-y",
                 "-i", video_path,
                 "-i", audio_path,
                 "-i", srt_path,
@@ -131,11 +150,15 @@ class VideoComposer:
                 "-ac", "2",
                 "-c:s", "mov_text",
                 "-metadata:s:s:0", "language=chi",
+                "-disposition:s:0", "default",
                 output_mp4
             ]
 
         logger.info(f"Running FFmpeg synchronized composition: {' '.join(cmd)}")
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=3600)
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("FFmpeg 合成超时（60 分钟），请检查视频长度与编码性能") from error
         if res.returncode != 0:
             err = res.stderr.decode("utf-8", errors="ignore")
             logger.error(f"FFmpeg composition failed: {err}")
@@ -153,5 +176,8 @@ class VideoComposer:
             "output_mp4": output_mp4,
             "output_srt": output_srt,
             "filename": output_filename,
-            "srt_filename": f"subtitles_{self.task_id}.srt"
+            "srt_filename": f"subtitles_{self.task_id}.srt",
+            "vtt_filename": vtt_filename,
+            "subtitle_mode": "hard" if use_hard_sub else "soft",
+            "warnings": warnings,
         }

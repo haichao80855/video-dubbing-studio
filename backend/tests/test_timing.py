@@ -251,6 +251,7 @@ class MediaTests(unittest.TestCase):
             Sine(440, sample_rate=48000).to_audio_segment(duration=500).export(audio, format="wav")
             failure = subprocess.CompletedProcess([], 1, b"", b"subtitles filter failed")
             with patch("backend.services.composer.OUTPUTS_DIR", root), \
+                 patch("backend.services.composer.select_composition_ffmpeg", return_value=("ffmpeg", True)), \
                  patch("backend.services.composer.subprocess.run", return_value=failure) as run:
                 with self.assertRaisesRegex(RuntimeError, "合成失败"):
                     VideoComposer(root, "test").compose_video("video.mp4", str(audio), [subtitle(1, 0, 0.5)])
@@ -269,9 +270,15 @@ class PipelineAndPreviewTests(unittest.TestCase):
         self.addCleanup(self.directory_patch.stop)
 
     def test_real_pipeline_uses_merged_source_segments_and_keeps_scene_gaps(self):
+        self.run_synthetic_pipeline(auto_pipeline=True)
+
+    def test_reviewed_pipeline_does_not_reenter_waiting_review(self):
+        self.run_synthetic_pipeline(auto_pipeline=False)
+
+    def run_synthetic_pipeline(self, auto_pipeline):
         module = self.manager_module
         manager = module.TaskManager()
-        task = manager.create_task({"url": "https://example.test/video", "auto_pipeline": True,
+        task = manager.create_task({"url": "https://example.test/video", "auto_pipeline": auto_pipeline,
                                     "deepseek_api_key": "test", "tts_speaking_rate": 3.2})
         raw = [{"id": index + 1, "start": 2 + index * 8, "end": 8 + index * 8,
                 "text": f"Complete source sentence {index}."} for index in range(3)]
@@ -287,13 +294,34 @@ class PipelineAndPreviewTests(unittest.TestCase):
         voice = SyntheticTTS(2000)
         composer = MagicMock()
         composer.compose_video.return_value = {"filename": "test.mp4"}
+
+        async def run():
+            if auto_pipeline:
+                await manager.run_pipeline(task)
+                return
+            pipeline = asyncio.create_task(manager.run_pipeline(task))
+            try:
+                while task.state != module.TaskState.WAITING_REVIEW and not pipeline.done():
+                    await asyncio.sleep(0.01)
+                self.assertFalse(pipeline.done(), task.error)
+                with patch.object(self.app_module, "task_manager", manager):
+                    await self.app_module.confirm_subtitles(task.task_id,
+                        self.app_module.ConfirmSubtitlesRequest(subtitles=task.subtitles))
+                accepted_log_index = len(task.logs) - 1
+                await pipeline
+                self.assertNotIn(module.TaskState.WAITING_REVIEW,
+                                 [entry["stage"] for entry in task.logs[accepted_log_index:]])
+            finally:
+                if not pipeline.done():
+                    pipeline.cancel()
+
         with patch.object(module, "VideoDownloader", return_value=downloader), \
              patch.object(module, "get_asr_engine", return_value=asr), \
              patch.object(module, "SpeakerExtractor", return_value=extractor), \
              patch.object(module, "DeepSeekTranslator", return_value=translator), \
              patch.object(module, "F5TTSMLXService", return_value=voice), \
              patch.object(module, "VideoComposer", return_value=composer):
-            asyncio.run(manager.run_pipeline(task))
+            asyncio.run(asyncio.wait_for(run(), timeout=10))
         self.assertEqual(task.state, module.TaskState.COMPLETED, task.error)
         self.assertEqual([s["start"] for s in task.subtitles], [2, 10, 18])
         self.assertEqual(task.source_segments, raw)
@@ -339,6 +367,51 @@ class PipelineAndPreviewTests(unittest.TestCase):
         self.assertEqual((task.subtitles[0]["start"], task.subtitles[0]["end"]), (5, 9))
         self.assertEqual(task.subtitles[0]["original_text"], "Original sentence.")
         self.assertTrue(task.review_event.is_set())
+        self.assertEqual(task.state, self.manager_module.TaskState.TTS)
+        saved = json.loads((task.task_dir / "subtitles.json").read_text())
+        self.assertEqual(saved, task.subtitles)
+
+    def test_repeated_confirmation_is_idempotent_after_pipeline_advances(self):
+        from fastapi.testclient import TestClient
+        manager, task = self.make_review_task()
+        payload = {"subtitles": [subtitle(7, 5, 9, " 修改后的文案 ")]}
+        with patch.object(self.app_module, "task_manager", manager), TestClient(self.app_module.app) as client:
+            path = f"/api/tasks/{task.task_id}/subtitles/confirm"
+            first = client.post(path, json=payload)
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertFalse(first.json()["already_confirmed"])
+            for stage in ("TTS", "COMPOSING", "COMPLETED", "FAILED"):
+                with self.subTest(stage=stage):
+                    task.state = stage
+                    # Synthesizing may add metadata; that must not change the accepted text.
+                    task.subtitles[0]["audio_path"] = "already-generated.wav"
+                    response = client.post(path, json=payload)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertTrue(response.json()["already_confirmed"])
+                    self.assertEqual(task.state, stage)
+                    self.assertEqual(task.subtitles[0]["audio_path"], "already-generated.wav")
+
+    def test_changed_text_after_confirmation_is_rejected_without_mutating(self):
+        from fastapi.testclient import TestClient
+        manager, task = self.make_review_task()
+        with patch.object(self.app_module, "task_manager", manager), TestClient(self.app_module.app) as client:
+            path = f"/api/tasks/{task.task_id}/subtitles/confirm"
+            client.post(path, json={"subtitles": [subtitle(7, 5, 9, "确认文案")]})
+            response = client.post(path, json={"subtitles": [subtitle(7, 5, 9, "再次修改")]})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("已确认", response.json()["detail"])
+        self.assertEqual(task.subtitles[0]["translated_text"], "确认文案")
+
+    def test_non_review_task_cannot_be_unblocked(self):
+        from fastapi.testclient import TestClient
+        manager, task = self.make_review_task()
+        task.state = self.manager_module.TaskState.FAILED
+        with patch.object(self.app_module, "task_manager", manager), TestClient(self.app_module.app) as client:
+            response = client.post(f"/api/tasks/{task.task_id}/subtitles/confirm",
+                                   json={"subtitles": task.subtitles})
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(task.review_event.is_set())
+        self.assertIsNone(task.confirmed_review)
 
     def test_review_overflow_returns_actionable_error_without_unblocking(self):
         from fastapi.testclient import TestClient

@@ -38,6 +38,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ taskStatus, result, on
         </button>
       </div>
 
+      {result.warnings?.map((warning, index) => (
+        <p key={index} className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200">
+          {warning}
+        </p>
+      ))}
+
       {/* Embedded Video Player */}
       <div className="rounded-2xl overflow-hidden bg-black border border-slate-800 shadow-inner max-w-4xl mx-auto aspect-video flex items-center justify-center relative group">
         <video
@@ -47,6 +53,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ taskStatus, result, on
           className="w-full h-full object-contain"
           src={videoUrl}
         >
+          {result.subtitle_mode === "soft" && result.vtt_filename && (
+            <track kind="subtitles" src={`/outputs/${result.vtt_filename}`} srcLang="zh" label="中文" default />
+          )}
           您的浏览器不支持 HTML5 视频播放。
         </video>
       </div>
@@ -67,7 +76,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ taskStatus, result, on
           </p>
           <p className="mt-0.5">
             时长: {taskStatus.video_info?.duration ? `${taskStatus.video_info.duration}s` : "完整"} ·
-            包含已压制的中文字幕与 48kHz 立体声原声克隆纯语音轨
+            包含{result.subtitle_mode === "soft" ? "可切换中文字幕" : "已压制的中文字幕"}与 48kHz 立体声原声克隆纯语音轨
           </p>
         </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   X,
   Volume2,
@@ -47,6 +47,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
   const [audioVersion, setAudioVersion] = useState(0);
   const [previewingId, setPreviewingId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitting = useRef(false);
   const [isUpdatingRef, setIsUpdatingRef] = useState(false);
   const [audioPlayer, setAudioPlayer] = useState<HTMLAudioElement | null>(null);
 
@@ -111,6 +112,8 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
   };
 
   const handleConfirm = async () => {
+    if (submitting.current) return;
+    submitting.current = true;
     try {
       setIsSubmitting(true);
       await confirmSubtitles(taskId, subtitles);
@@ -118,6 +121,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
     } catch (e: any) {
       alert("保存字幕并继续失败: " + e.message);
     } finally {
+      submitting.current = false;
       setIsSubmitting(false);
     }
   };

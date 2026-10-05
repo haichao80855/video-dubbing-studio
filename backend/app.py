@@ -246,13 +246,20 @@ async def confirm_subtitles(task_id: str, req: ConfirmSubtitlesRequest):
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if task.state != TaskState.WAITING_REVIEW:
-        raise HTTPException(status_code=409, detail="任务当前不处于字幕校对阶段")
-
-    # Update subtitles with user edits
     edited = {item.id: item for item in req.subtitles}
     if len(edited) != len(req.subtitles) or set(edited) != {item["id"] for item in task.subtitles}:
         raise HTTPException(status_code=400, detail="字幕段落不能重复或遗漏")
+    submitted = {segment_id: item.translated_text.strip() for segment_id, item in edited.items()}
+    # A response can be lost or a stale editor can resubmit after the pipeline resumes.
+    # Only identical text is idempotent; never overwrite speech already being generated.
+    if task.confirmed_review is not None:
+        if submitted != task.confirmed_review:
+            raise HTTPException(status_code=409, detail="字幕已确认，配音已启动，不能再次修改文案")
+        return {"status": "success", "message": "字幕已确认", "state": task.state, "already_confirmed": True}
+    if task.state != TaskState.WAITING_REVIEW:
+        raise HTTPException(status_code=409, detail="任务当前不处于字幕校对阶段，请查看任务进度或失败原因")
+
+    # Update subtitles with user edits
     updated = []
     for original in task.subtitles:
         text = edited[original["id"]].translated_text.strip()
@@ -266,14 +273,20 @@ async def confirm_subtitles(task_id: str, req: ConfirmSubtitlesRequest):
         # Preserve source anchors, transcript and subsegments when saving edits.
         updated.append({**original, "translated_text": text})
     task.subtitles = updated
-    task.save_state()
+    # Persist reviewed text as well as the state; preserve it for manual recovery/export.
+    with open(task.task_dir / "subtitles.json", "w", encoding="utf-8") as f:
+        json.dump(updated, f, ensure_ascii=False, indent=2)
+    task.confirmed_review = submitted
+    task.add_log("字幕已确认，开始原声克隆配音...", TaskState.TTS, 0.0)
 
     # Unblock review waiting event
     task.review_event.set()
 
     return {
         "status": "success",
-        "message": "字幕已确认，流水线继续进行配音合成"
+        "message": "字幕已确认，流水线继续进行配音合成",
+        "state": task.state,
+        "already_confirmed": False,
     }
 
 @app.post("/api/tts/preview")

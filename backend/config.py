@@ -1,5 +1,7 @@
 import os
 import shutil
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 # Paths
@@ -13,23 +15,50 @@ OUTPUTS_DIR = STORAGE_DIR / "outputs"
 for p in [STORAGE_DIR, DOWNLOADS_DIR, TASKS_DIR, OUTPUTS_DIR]:
     p.mkdir(parents=True, exist_ok=True)
 
-# FFmpeg discovery
-def find_binary(name: str) -> str:
-    # 1. Prefer conda env with libass support, then Homebrew / Mac locations
-    common_mac_paths = [
+# FFmpeg discovery: full Homebrew builds are keg-only, so also check their opt paths.
+def binary_candidates(name: str) -> list[str]:
+    override = os.environ.get(f"VDS_{name.upper()}_PATH")
+    paths = ([override] if override else []) + [
+        f"/opt/homebrew/opt/ffmpeg-full/bin/{name}",
+        f"/usr/local/opt/ffmpeg-full/bin/{name}",
         f"/opt/miniconda3/envs/mlscreen311/bin/{name}",
         f"/opt/homebrew/bin/{name}",
         f"/usr/local/bin/{name}",
         f"/opt/miniconda3/bin/{name}",
     ]
-    for p in common_mac_paths:
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
-    # 2. System PATH
     found = shutil.which(name)
     if found:
-        return found
-    return name
+        paths.append(found)
+    return list(dict.fromkeys(p for p in paths if os.path.isfile(p) and os.access(p, os.X_OK)))
+
+
+def find_binary(name: str) -> str:
+    candidates = binary_candidates(name)
+    return candidates[0] if candidates else name
+
+
+@lru_cache(maxsize=16)
+def ffmpeg_has_filter(binary: str, filter_name: str) -> bool:
+    """Inspect actual capabilities rather than assuming an installation has libass."""
+    try:
+        result = subprocess.run(
+            [binary, "-hide_banner", "-filters"], capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and any(
+        len(fields := line.split()) >= 2 and fields[1] == filter_name
+        for line in result.stdout.splitlines()
+    )
+
+
+def select_composition_ffmpeg(preferred: str, hard_sub: bool) -> tuple[str, bool]:
+    if not hard_sub:
+        return preferred, False
+    for candidate in dict.fromkeys([preferred, *binary_candidates("ffmpeg")]):
+        if ffmpeg_has_filter(candidate, "subtitles"):
+            return candidate, True
+    return preferred, False
 
 FFMPEG_PATH = find_binary("ffmpeg")
 FFPROBE_PATH = find_binary("ffprobe")

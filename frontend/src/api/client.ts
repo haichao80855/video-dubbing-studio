@@ -36,6 +36,9 @@ export interface TaskResult {
   output_srt: string;
   filename: string;
   srt_filename: string;
+  vtt_filename?: string;
+  subtitle_mode?: "hard" | "soft";
+  warnings?: string[];
 }
 
 export interface SpeakerRef {
@@ -148,7 +151,7 @@ export async function fetchTaskStatus(taskId: string): Promise<TaskStatus> {
   return res.json();
 }
 
-export async function fetchSubtitles(taskId: string): Promise<{ subtitles: SubtitleItem[] }> {
+export async function fetchSubtitles(taskId: string): Promise<{ state: TaskStatus["state"]; subtitles: SubtitleItem[] }> {
   const res = await fetch(`${API_BASE}/api/tasks/${taskId}/subtitles`);
   if (!res.ok) throw new Error("获取字幕失败");
   return res.json();

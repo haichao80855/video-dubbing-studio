@@ -49,6 +49,7 @@ class Task:
         self.speaker_ref: Dict[str, Any] = {}
         self.subscribers: List[asyncio.Queue] = []
         self.review_event = asyncio.Event()
+        self.confirmed_review: Optional[Dict[int, str]] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
 
     def add_log(self, message: str, stage: str, progress: float):
@@ -93,6 +94,7 @@ class Task:
             "video_info": self.video_info,
             "speaker_ref": self.speaker_ref,
             "subtitles_count": len(self.subtitles),
+            "review_confirmed": self.confirmed_review is not None,
             "result": self.result,
             "error": self.error,
             "created_at": self.created_at
@@ -256,7 +258,7 @@ class TaskManager:
 
                 # Pause and wait for frontend confirmation
                 await task.review_event.wait()
-                task.add_log("用户确认校对完成，开始后续配音合成...", TaskState.WAITING_REVIEW, 100.0)
+                task.add_log("用户确认校对完成，开始后续配音合成...", TaskState.TTS, 0.0)
 
             # --- STAGE 5: TTS (F5-TTS MLX 连续连贯原声克隆) ---
             speed_mode = cfg.get("tts_speed_mode", "balanced")

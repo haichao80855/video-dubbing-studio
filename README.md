@@ -183,6 +183,12 @@ vp/
    - 本系统采用全链路 48000Hz 立体声编码（`-c:a aac -b:a 192k -ar 48000 -ac 2`）并对 F5-TTS 的输出音频进行了电平峰值归一化，完全兼容 Safari、Chrome 及各类播放器，绝不走空或静音。
 3. **MLX 模型首次下载缓存**：
    - 首次运行 ASR 与 F5-TTS 任务时，系统会自动从 HuggingFace 缓存模型权重，之后永久本地秒级加载。
+4. **确认字幕提示不在校对阶段 / 窗口重复弹出**：
+   - 确认后任务立即进入配音阶段，校对窗口会关闭；相同文案的重复确认返回成功。已确认后再改文案会被拒绝，避免覆盖正在生成的配音。后续合成错误显示在任务进度中。
+5. **FFmpeg 报 `No such filter: 'subtitles'`**：
+   - 该 FFmpeg 没有编译 `libass`。系统会检测可用版本；若均缺少滤镜，自动输出带可切换中文字幕的 MP4、SRT 和用于浏览器预览的 WebVTT，并在日志和结果页提示。配音与视频仍按原时间轴合成。
+   - 如需画面内嵌硬字幕，在 Mac 终端运行 `brew install ffmpeg-full`，再重启服务。无需强制链接：系统会检测 Apple Silicon 的 `/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg` 与 Intel 的 `/usr/local/opt/ffmpeg-full/bin/ffmpeg`。
+   - 自定义安装位置可在启动前设置 `VDS_FFMPEG_PATH` 与 `VDS_FFPROBE_PATH`；修改后重启服务。
 
 ## 验证时间轴修复
 
@@ -195,6 +201,16 @@ cd frontend
 npm run build
 ```
 
-回归测试使用合成 WAV 和模拟的模型/API 响应，检查 5 分钟音轨无累积漂移、原停顿保留、超长文案与音频拒绝截尾、试听参数一致、实际媒体时长和 FFmpeg 错误处理。独立合成脚本会实际运行 FFmpeg 并检查 MP4 音频属性。
+回归测试使用合成 WAV 和模拟的模型/API 响应，检查 5 分钟音轨无累积漂移、原停顿保留、超长文案与音频拒绝截尾、试听参数一致、重复确认与校对状态。字幕兼容测试实际模拟缺少字幕滤镜的 FFmpeg 并验证软字幕轨道、中文文本、时间戳和 48kHz 立体声；独立合成脚本检查硬字幕合成与 MP4 音频属性。
 
 这些 CPU 测试不需要下载模型。Linux 上可只安装 `numpy scipy soundfile pydub httpx fastapi yt-dlp` 来运行；真实克隆音质仍需要在 Apple Silicon Mac 上试听。更新代码并重启后需要重新生成视频，已有输出不会自动改变。
+
+浏览器校对流程回归（先构建前端）：
+
+```bash
+python -m pip install playwright
+python -m playwright install chromium
+python frontend/tests/test_review_flow.py
+```
+
+测试会自动启动本地静态服务并模拟 API 与状态事件，检查重复点击仅提交一次、等待中的文案不被轮询覆盖、延迟请求不重新打开已确认或失败的校对窗口，以及软字幕预览轨道。

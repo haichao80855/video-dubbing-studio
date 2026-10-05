@@ -6,6 +6,18 @@ from pathlib import Path
 from typing import Optional, List
 import numpy as np
 import soundfile as sf
+import mlx.core as mx
+
+# Fix MLX 0.22+ nanobind compatibility with f5_tts_mlx:
+# f5_tts_mlx passes (self.num_channels, dur) where dur is an mx.array(dtype=float32),
+# but MLX 0.22+ strictly expects Sequence[int], raising TypeError: normal(): incompatible function arguments.
+_orig_mx_random_normal = mx.random.normal
+def _safe_mx_random_normal(shape=None, *args, **kwargs):
+    if shape is not None and isinstance(shape, (tuple, list)):
+        shape = [int(x.item() if hasattr(x, 'item') else int(x)) for x in shape]
+    return _orig_mx_random_normal(shape, *args, **kwargs)
+
+mx.random.normal = _safe_mx_random_normal
 
 logger = logging.getLogger(__name__)
 

@@ -43,13 +43,17 @@ if [ ! -d "${VENV_DIR}" ] || [ ! -x "${PYTHON}" ] || ! "${PYTHON}" -c "import sy
   echo "✓ 依赖安装完成！"
 fi
 
-# 2. Check if frontend build exists, if not build it
-if [ ! -d "${ROOT_DIR}/frontend/dist" ]; then
-  echo "📦 正在构建前端资源..."
-  cd "${ROOT_DIR}/frontend"
-  npm install
-  npm run build
-  cd "${ROOT_DIR}"
+# 2. Check and rebuild frontend if needed
+echo "📦 检查并构建前端静态资源..."
+cd "${ROOT_DIR}/frontend"
+npm run build
+cd "${ROOT_DIR}"
+
+# 3. Kill any zombie process holding port 8000 to guarantee newest code runs
+if lsof -ti :8000 >/dev/null 2>&1; then
+  echo "🔄 清理占用 8000 端口的旧进程，确保加载最新代码..."
+  lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+  sleep 0.5
 fi
 
 # 3. Handle arguments: --dev runs both backend and vite dev server

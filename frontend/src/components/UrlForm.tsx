@@ -230,12 +230,12 @@ export const UrlForm: React.FC<UrlFormProps> = ({
             {isLoading ? (
               <>
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                <span>正在执行原声克隆翻译流水线...</span>
+                <span>正在执行全篇连贯解说流式克隆流水线...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>开始原声克隆处理 (URL → ASR → DeepSeek → F5-TTS → 48kHz MP4)</span>
+                <span>开始全篇连贯解说 (URL → 全文意译 → 连续流式原声克隆 → 48kHz MP4)</span>
               </>
             )}
           </button>

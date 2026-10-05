@@ -12,16 +12,34 @@ from backend.services.tts import F5TTSCloneRunner
 from backend.services.aligner import AudioAligner
 from backend.services.composer import VideoComposer, format_timestamp_srt, wrap_subtitle_text
 from backend.services.sentence_merger import SentenceMerger
+from backend.services.continuous_flow_dubber import ContinuousFlowDubber
 from pydub import AudioSegment
 from pydub.generators import Sine
 
 async def test_dubbing_core():
-    print("=== Testing Video Dubbing Core Pipeline (F5-TTS MLX & 48kHz Stereo) ===")
+    print("=== Testing Video Dubbing Core Pipeline (Continuous Flow & F5-TTS MLX) ===")
     test_task_dir = TASKS_DIR / "test_task"
     test_task_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Test SentenceMerger (Semantic Sentence Aggregation)
-    print("\n1. Testing SentenceMerger (Converting fragmented Whisper clips to natural long sentences)...")
+    # 1. Test ContinuousFlowDubber Narrative Extraction
+    print("\n1. Testing ContinuousFlowDubber (Full narrative consolidation)...")
+    raw_micro_segments = [
+        {"id": 1, "start": 0.0, "end": 2.5, "text": "Now it's time to set up the playground that"},
+        {"id": 2, "start": 2.5, "end": 5.1, "text": "we're going to be using to practice our AI coding and"},
+        {"id": 3, "start": 5.3, "end": 8.0, "text": "setting up the environment that we're going to use to edit code."},
+        {"id": 4, "start": 8.2, "end": 11.0, "text": "The main thing that we are going to need is an IDE."},
+        {"id": 5, "start": 11.2, "end": 14.5, "text": "And the one I recommend is Visual Studio Code."},
+    ]
+    dubber = ContinuousFlowDubber(task_dir=test_task_dir)
+    narrative = dubber.extract_full_narrative(raw_micro_segments)
+    print("  Narrative full text:", narrative["full_text"])
+    print(f"  Total speech duration: {narrative['total_speech_duration']}s (Span: {narrative['global_start']}s ~ {narrative['global_end']}s)")
+    assert len(narrative["full_text"]) > 100, "Full text is too short"
+    assert narrative["total_speech_duration"] == 14.5, "Total duration mismatch"
+    print("✓ ContinuousFlowDubber narrative consolidation verified!")
+
+    # 2. Test SentenceMerger (Semantic Sentence Aggregation)
+    print("\n2. Testing SentenceMerger (Converting fragmented Whisper clips to natural long sentences)...")
     raw_micro_segments = [
         {"id": 1, "start": 0.0, "end": 2.5, "text": "Now it's time to set up the playground that"},
         {"id": 2, "start": 2.5, "end": 5.1, "text": "we're going to be using to practice our AI coding and"},

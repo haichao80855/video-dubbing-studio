@@ -19,12 +19,12 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, hasDeepSeekKey }
               <h1 className="font-bold text-lg text-white tracking-tight">
                 Video Dubbing Studio
               </h1>
-              <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                v1.0
+              <span className="px-2 py-0.5 text-xs font-semibold rounded-full bg-gradient-to-r from-blue-500/20 to-indigo-500/20 text-blue-300 border border-blue-500/30">
+                v2.0 连贯流式版
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Bilibili / YouTube → MLX ASR → DeepSeek 智能意译 → CosyVoice/Edge TTS → 中文 MP4
+              Bilibili / YouTube → MLX ASR → DeepSeek 全文通篇意译 → F5-TTS 连续原声解说流 (消灭1秒死寂) → 48kHz 中文 MP4
             </p>
           </div>
         </div>

@@ -13,6 +13,8 @@ from backend.services.translator import DeepSeekTranslator
 from backend.services.tts import F5TTSCloneRunner
 from backend.services.speaker_extractor import SpeakerExtractor
 from backend.services.sentence_merger import SentenceMerger
+from backend.services.continuous_flow_dubber import ContinuousFlowDubber
+from backend.services.f5_tts_mlx import F5TTSMLXService
 from backend.services.aligner import AudioAligner
 from backend.services.composer import VideoComposer
 
@@ -198,9 +200,9 @@ class TaskManager:
             task.save_state()
             task.add_log(f"已提取原人物音色样本 (片段 #{speaker_ref['segment_id']}: {speaker_ref['duration']}s)", TaskState.ASR, 100.0)
 
-            # --- STAGE 3: TRANSLATION (DeepSeek) ---
+            # --- STAGE 3: TRANSLATION (DeepSeek 全文连贯意译) ---
             model_name = cfg.get("deepseek_model", "deepseek4.1flash")
-            task.add_log(f"正在调用 DeepSeek ({model_name}) 进行自然长句连贯意译...", TaskState.TRANSLATING, 0.0)
+            task.add_log(f"正在调用 DeepSeek ({model_name}) 进行全文通篇连贯意译...", TaskState.TRANSLATING, 0.0)
             deepseek_key = cfg.get("deepseek_api_key", "").strip()
             base_url = cfg.get("deepseek_base_url", "https://api.deepseek.com/v1")
             translator = DeepSeekTranslator(
@@ -208,17 +210,21 @@ class TaskManager:
                 base_url=base_url,
                 model_name=model_name
             )
+
+            dubber = ContinuousFlowDubber(task_dir=task.task_dir)
+            narrative_info = dubber.extract_full_narrative(raw_segments)
+
             translated_subtitles = await loop.run_in_executor(
                 None,
-                lambda: translator.translate_segments(
-                    merged_segments,
-                    source_language=detected_lang,
+                lambda: dubber.translate_full_flow(
+                    narrative_info=narrative_info,
+                    translator=translator,
                     progress_callback=lambda p, msg: task.add_log(msg, TaskState.TRANSLATING, p)
                 )
             )
             task.subtitles = translated_subtitles
             task.save_state()
-            task.add_log("DeepSeek 意译与对齐字幕生成完成！", TaskState.TRANSLATING, 100.0)
+            task.add_log("DeepSeek 全文通篇意译与连贯长段落生成完成！", TaskState.TRANSLATING, 100.0)
 
             # Save subtitles to json
             with open(task.task_dir / "subtitles.json", "w", encoding="utf-8") as f:
@@ -244,38 +250,32 @@ class TaskManager:
                 await task.review_event.wait()
                 task.add_log("用户确认校对完成，开始后续配音合成...", TaskState.WAITING_REVIEW, 100.0)
 
-            # --- STAGE 5: TTS (F5-TTS MLX 原人物声音克隆) ---
+            # --- STAGE 5: TTS (F5-TTS MLX 连续连贯原声克隆) ---
             speed_mode = cfg.get("tts_speed_mode", "balanced")
-            task.add_log(f"开始使用 F5-TTS MLX 进行原人物声音克隆配音 (加速模式: {speed_mode})...", TaskState.TTS, 0.0)
+            task.add_log(f"使用 F5-TTS MLX 进行通篇连续流式声音克隆合成 (消灭一切1秒停顿，微换气模式)...", TaskState.TTS, 0.0)
 
-            tts_runner = F5TTSCloneRunner(
+            f5_service = F5TTSMLXService(
                 ref_audio_path=task.speaker_ref.get("audio_path"),
-                ref_audio_text=task.speaker_ref.get("ref_text"),
-                speed_mode=speed_mode
+                ref_audio_text=task.speaker_ref.get("ref_text")
             )
-            subtitles_with_audio = await tts_runner.generate_all(
-                task.subtitles,
-                task_dir=task.task_dir,
-                progress_callback=lambda p, msg: task.add_log(msg, TaskState.TTS, p)
-            )
-            task.subtitles = subtitles_with_audio
-            task.add_log("全部分句原声克隆配音合成完成！", TaskState.TTS, 100.0)
 
-            # --- STAGE 6: FORCED ALIGNMENT & TIME-STRETCHING ---
-            task.add_log("进行时间轴对齐、保调变速 (atempo) 与全轨缝合...", TaskState.ALIGNING, 0.0)
-            aligner = AudioAligner(task_dir=task.task_dir)
-            total_dur = float(video_info.get("duration", 0.0)) or subtitles_with_audio[-1]["end"]
-            dubbed_audio_path = await loop.run_in_executor(
+            total_video_dur = float(video_info.get("duration", 0.0))
+            dubbed_audio_path, updated_subtitles = await loop.run_in_executor(
                 None,
-                lambda: aligner.align_and_stitch(
-                    subtitles_with_audio,
-                    total_duration=total_dur,
-                    progress_callback=lambda p, msg: task.add_log(msg, TaskState.ALIGNING, p)
+                lambda: dubber.synthesize_and_stitch_continuous(
+                    subtitles=task.subtitles,
+                    f5_service=f5_service,
+                    global_start_sec=narrative_info.get("global_start", 0.0),
+                    video_total_duration=total_video_dur,
+                    speed_mode=speed_mode,
+                    progress_callback=lambda p, msg: task.add_log(msg, TaskState.TTS, p)
                 )
             )
-            task.add_log("完整中文音轨与视频时间轴对齐完成！", TaskState.ALIGNING, 100.0)
+            task.subtitles = updated_subtitles
+            task.save_state()
+            task.add_log("全篇行云流水连续配音合成完成！(句间仅0.2s自然换气，零死寂停顿)", TaskState.TTS, 100.0)
 
-            # --- STAGE 7: FFmpeg COMPOSITION ---
+            # --- STAGE 6: COMPOSING DIRECTLY ---
             task.add_log("进行最终视频混流与中文字幕合成...", TaskState.COMPOSING, 0.0)
             composer = VideoComposer(task_dir=task.task_dir, task_id=task.task_id)
             comp_res = await loop.run_in_executor(

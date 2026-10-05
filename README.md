@@ -115,6 +115,7 @@ vp/
 │   │   ├── downloader.py      # yt-dlp 视频/音频下载服务
 │   │   ├── asr.py             # mlx-whisper 硬件加速语音识别
 │   │   ├── sentence_merger.py # 语义长句重整器 (碎句聚合成 8~14s 连贯长句)
+│   │   ├── continuous_flow_dubber.py # 全篇连贯原声解说流引擎 (通篇意译与200ms微换气)
 │   │   ├── translator.py      # DeepSeek 智能翻译与长句气口控制
 │   │   ├── tts.py             # F5-TTS MLX 原声克隆批量调度器
 │   │   ├── f5_tts_mlx.py      # F5-TTS MLX 模型加载、Euler加速与零样本推理服务

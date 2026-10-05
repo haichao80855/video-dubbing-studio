@@ -9,7 +9,10 @@ from backend.config import FFMPEG_PATH
 logger = logging.getLogger(__name__)
 
 class AudioAligner:
-    """Handles Forced Alignment & Time-stretching for video dubbing timeline matching."""
+    """
+    Handles Forced Alignment & Time-stretching with Absolute Timestamp Overlay Anchoring.
+    Guarantees 0ms cumulative drift and perfect audio-video synchronization.
+    """
 
     def __init__(self, task_dir: Path):
         self.task_dir = task_dir
@@ -41,71 +44,77 @@ class AudioAligner:
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> str:
         """
-        Aligns each audio clip with original sentence slot using time-stretching,
-        and stitches all segments into a complete continuous dubbing track in 48kHz stereo.
+        Aligns each audio clip onto an absolute timeline canvas using exact millisecond overlay.
+        Eliminates sequential accumulation drift completely (0ms error).
         """
         if not subtitles_with_audio:
             raise ValueError("没有可用的音频切片进行对齐")
 
         total = len(subtitles_with_audio)
-        full_track = AudioSegment.silent(duration=0, frame_rate=48000).set_channels(2)
-        current_ms = 0
+        # Allocate canvas matching total_duration + safe buffer
+        canvas_total_ms = int(total_duration * 1000) + 3000
+        full_canvas = AudioSegment.silent(duration=canvas_total_ms, frame_rate=48000).set_channels(2)
 
-        logger.info(f"Stitching {total} audio segments into timeline (Target Duration: {total_duration}s, 48kHz Stereo)")
+        logger.info(f"Stitching {total} audio segments using Absolute Timestamp Overlay (Target Duration: {total_duration}s, 48kHz Stereo)")
 
         for idx, item in enumerate(subtitles_with_audio):
             seg_id = item["id"]
             start_sec = item["start"]
             end_sec = item["end"]
-            target_duration = max(0.2, end_sec - start_sec)
             audio_path = item.get("audio_path")
             tts_duration = item.get("tts_duration", 0.0)
+
+            # Look ahead to next sentence start to determine allowed window budget
+            next_item = subtitles_with_audio[idx + 1] if idx + 1 < total else None
+            if next_item:
+                slot_duration = max(0.4, next_item["start"] - start_sec)
+            else:
+                slot_duration = max(0.4, end_sec - start_sec)
 
             aligned_path = str(self.aligned_clips_dir / f"aligned_{seg_id:04d}.wav")
 
             # Calculate speed adjustment factor
-            if tts_duration > target_duration * 1.05:
-                # TTS audio is longer than original slot -> speed up
-                raw_ratio = tts_duration / target_duration
-                # Cap speedup to 1.35x to maintain natural voice quality
+            if tts_duration > slot_duration * 1.05:
+                # TTS audio exceeds window -> speed up within natural range (max 1.35x)
+                raw_ratio = tts_duration / slot_duration
                 speed_factor = min(1.35, raw_ratio)
                 self._stretch_audio(audio_path, aligned_path, speed_factor)
-            elif tts_duration < target_duration * 0.70 and tts_duration > 1.5:
-                # TTS audio is significantly shorter, slight slowdown (max 0.92x)
+            elif tts_duration < slot_duration * 0.70 and tts_duration > 1.5:
+                # TTS audio is noticeably shorter -> slight slowdown (max 0.92x)
                 speed_factor = 0.92
                 self._stretch_audio(audio_path, aligned_path, speed_factor)
             else:
-                # Standardize to 48kHz stereo
+                # Keep original speed, ensure 48kHz stereo
                 self._stretch_audio(audio_path, aligned_path, 1.0)
 
             # Load the aligned segment in 48kHz stereo
             clip = AudioSegment.from_file(aligned_path).set_frame_rate(48000).set_channels(2)
-            target_start_ms = int(start_sec * 1000)
 
-            # Insert silence if there is a gap before this segment
-            if target_start_ms > current_ms:
-                gap_ms = target_start_ms - current_ms
-                full_track += AudioSegment.silent(duration=gap_ms, frame_rate=48000).set_channels(2)
-                current_ms = target_start_ms
+            # Boundary protection: if clip still slightly exceeds slot_duration,
+            # soft fade-out at the slot boundary so it NEVER intrudes into the next sentence's start!
+            slot_ms = int(slot_duration * 1000)
+            if len(clip) > slot_ms:
+                fade_ms = min(60, int(slot_ms * 0.1))
+                clip = clip[:slot_ms].fade_out(fade_ms)
 
-            # Append audio clip
-            full_track += clip
-            current_ms += len(clip)
+            # --- ABSOLUTE TIMESTAMP OVERLAY (核心：绝对时间戳打点) ---
+            # Every sentence starts at its exact mathematical millisecond in the video timeline!
+            # Zero cumulative drift!
+            start_ms = max(0, int(start_sec * 1000))
+            full_canvas = full_canvas.overlay(clip, position=start_ms)
 
             if progress_callback:
                 pct = (idx + 1) / total * 90.0
-                progress_callback(pct, f"正在对齐时间轴与拼接 48kHz 音轨 ({idx + 1}/{total})...")
+                progress_callback(pct, f"正在绝对时间轴对齐音轨 ({idx + 1}/{total})...")
 
-        # Fill remaining time with silence up to total_duration
-        target_total_ms = int(total_duration * 1000)
-        if target_total_ms > current_ms:
-            tail_gap = target_total_ms - current_ms
-            full_track += AudioSegment.silent(duration=tail_gap, frame_rate=48000).set_channels(2)
+        # Trim final audio canvas to exact video total_duration
+        target_ms = int(total_duration * 1000)
+        final_track = full_canvas[:target_ms]
 
         out_full_audio = str(self.task_dir / "dubbed_full_track.wav")
-        full_track.export(out_full_audio, format="wav")
+        final_track.export(out_full_audio, format="wav")
 
         if progress_callback:
-            progress_callback(100.0, "完整中文配音轨对齐与缝合完成 (48kHz 双声道)")
+            progress_callback(100.0, "绝对时间轴对齐与音画锁定完成 (48kHz 立体声，零累积漂移)")
 
         return out_full_audio

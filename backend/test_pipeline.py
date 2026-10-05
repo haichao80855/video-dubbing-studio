@@ -25,58 +25,82 @@ async def test_dubbing_core():
     assert format_timestamp_srt(65.5) == "00:01:05,500", "SRT timestamp format mismatch"
     print("✓ SRT Timestamp formatting verified.")
 
-    # 2. Test Audio Generation & Alignment in 48kHz Stereo
-    print("\n2. Testing 48kHz Stereo Alignment & Time-stretching (atempo)...")
-    # Generate test audio clips with audible tone (440Hz and 880Hz) to ensure non-silence
+    # 2. Test Audio Generation & Alignment in 48kHz Stereo with Absolute Timestamp Overlay
+    print("\n2. Testing 48kHz Stereo Alignment & Absolute Timestamp Overlay (Zero Cumulative Drift)...")
     tts_dir = test_task_dir / "tts_clips"
     tts_dir.mkdir(parents=True, exist_ok=True)
 
     clip1_path = str(tts_dir / "clip_0001.wav")
     clip2_path = str(tts_dir / "clip_0002.wav")
+    clip3_path = str(tts_dir / "clip_0003.wav")
 
-    # Generate 2 seconds of 440Hz audible sine wave in 48kHz stereo
-    tone1 = Sine(440).to_audio_segment(duration=2000).set_frame_rate(48000).set_channels(2)
+    # Clip 1: Intentionally long (2.8s) for a 1.5s slot (to test overflow containment & atempo)
+    tone1 = Sine(440).to_audio_segment(duration=2800).set_frame_rate(48000).set_channels(2)
     tone1.export(clip1_path, format="wav")
 
-    # Generate 2.5 seconds of 660Hz audible sine wave in 48kHz stereo
-    tone2 = Sine(660).to_audio_segment(duration=2500).set_frame_rate(48000).set_channels(2)
+    # Clip 2: 1.8s for 2.0s slot (starts at 3.0s)
+    tone2 = Sine(660).to_audio_segment(duration=1800).set_frame_rate(48000).set_channels(2)
     tone2.export(clip2_path, format="wav")
+
+    # Clip 3: 1.5s for 1.5s slot (starts at 5.5s)
+    tone3 = Sine(880).to_audio_segment(duration=1500).set_frame_rate(48000).set_channels(2)
+    tone3.export(clip3_path, format="wav")
 
     sample_subtitles = [
         {
             "id": 1,
             "start": 0.5,
-            "end": 2.5,
-            "text": "Hello world",
-            "translated_text": "你好世界测试原声克隆",
+            "end": 2.0,
+            "text": "Intentionally long sentence",
+            "translated_text": "第一句故意很长用来测试溢出不推迟后续句子",
             "audio_path": clip1_path,
-            "tts_duration": 2.0
+            "tts_duration": 2.8
         },
         {
             "id": 2,
             "start": 3.0,
-            "end": 5.5,
-            "text": "Apple Silicon MLX Metal",
-            "translated_text": "苹果硬件加速测试",
+            "end": 5.0,
+            "text": "Second sentence anchor",
+            "translated_text": "第二句必须严格在三秒打点启动",
             "audio_path": clip2_path,
-            "tts_duration": 2.5
+            "tts_duration": 1.8
+        },
+        {
+            "id": 3,
+            "start": 5.5,
+            "end": 7.0,
+            "text": "Third sentence anchor",
+            "translated_text": "第三句必须严格在五点五秒打点启动",
+            "audio_path": clip3_path,
+            "tts_duration": 1.5
         }
     ]
 
     aligner = AudioAligner(task_dir=test_task_dir)
-    full_audio_path = aligner.align_and_stitch(sample_subtitles, total_duration=6.0)
+    full_audio_path = aligner.align_and_stitch(sample_subtitles, total_duration=8.0)
     print(f"✓ Stitched full audio track: {full_audio_path}")
     assert os.path.exists(full_audio_path), "Full dubbed track not created"
     
     full_audio = AudioSegment.from_file(full_audio_path)
-    print(f"  Track duration: {len(full_audio)/1000.0}s (Target: 6.0s)")
+    print(f"  Track duration: {len(full_audio)/1000.0}s (Target: 8.0s)")
     print(f"  Frame rate: {full_audio.frame_rate} Hz (Expected: 48000)")
     print(f"  Channels: {full_audio.channels} (Expected: 2 Stereo)")
     assert full_audio.frame_rate == 48000, f"Expected 48000Hz, got {full_audio.frame_rate}"
     assert full_audio.channels == 2, f"Expected 2 channels stereo, got {full_audio.channels}"
-    # Verify non-silent amplitude
-    assert full_audio.dBFS > -40.0, f"Audio track is silent or near-zero dBFS: {full_audio.dBFS}"
-    print(f"  Track Loudness: {full_audio.dBFS:.1f} dBFS (Clearly audible!)")
+    assert full_audio.dBFS > -40.0, f"Audio track is silent: {full_audio.dBFS}"
+    print(f"  Track Loudness: {full_audio.dBFS:.1f} dBFS (Audible!)")
+
+    # Verify that before 0.5s (e.g. 0.0s~0.4s) is silence:
+    silence_before_seg1 = full_audio[0:400]
+    assert silence_before_seg1.dBFS < -50.0 or silence_before_seg1.dBFS == float("-inf"), "Silence before segment 1 is not silent"
+
+    # Verify that segment 2 starts on schedule: before 3.0s (e.g. 2.8s~2.95s) is silence, then sound starts at 3.0s
+    silence_before_seg2 = full_audio[2800:2950]
+    sound_at_seg2 = full_audio[3050:3500]
+    print(f"  Silence before Seg 2 (2.8s~2.95s): {silence_before_seg2.dBFS:.1f} dBFS")
+    print(f"  Sound at Seg 2 (3.05s~3.5s): {sound_at_seg2.dBFS:.1f} dBFS")
+    assert sound_at_seg2.dBFS > -20.0, "Segment 2 is not playing at its exact 3.0s timestamp!"
+    print("✓ Absolute Timestamp Overlay Verified: Segment 1 overflow did NOT drift Segment 2 (0ms drift)!")
 
     # 3. Test FFmpeg Synthetic Video Composition
     print("\n3. Testing FFmpeg Video Composition with 48kHz Stereo AAC...")

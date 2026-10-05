@@ -235,15 +235,22 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
         <div className="flex-1 overflow-y-auto p-6 space-y-3 bg-slate-950/40">
           {subtitles.map((item) => {
             const duration = Math.max(0.1, item.end - item.start);
+            const maxChars = Math.max(3, Math.round(duration * 3.8));
             const charCount = (item.translated_text || "").length;
             const charsPerSec = charCount / duration;
-            const isTooFast = charsPerSec > 5.5;
-            const isTooSlow = charsPerSec < 2.0 && charCount > 0;
+            const isSevereOverflow = charCount > maxChars * 1.25;
+            const isWarningOverflow = charCount > maxChars && !isSevereOverflow;
 
             return (
               <div
                 key={item.id}
-                className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-slate-700 transition space-y-3"
+                className={`p-4 rounded-2xl bg-slate-900/90 border transition space-y-3 ${
+                  isSevereOverflow
+                    ? "border-rose-500/50 bg-rose-950/10"
+                    : isWarningOverflow
+                    ? "border-amber-500/40 bg-amber-950/10"
+                    : "border-slate-800 hover:border-slate-700"
+                }`}
               >
                 {/* Meta row */}
                 <div className="flex items-center justify-between text-xs text-slate-400">
@@ -257,22 +264,28 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
                         {item.start.toFixed(2)}s ~ {item.end.toFixed(2)}s
                       </span>
                     </span>
-                    <span className="text-slate-500">时长: {duration.toFixed(2)}s</span>
+                    <span className="text-slate-400 font-semibold">
+                      时长: {duration.toFixed(2)}s · 建议 ≤ {maxChars} 字
+                    </span>
                   </div>
 
                   <div className="flex items-center space-x-3">
                     {/* Speed pace indicator */}
                     <span
                       className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
-                        isTooFast
-                          ? "bg-rose-500/10 text-rose-400 border border-rose-500/20"
-                          : isTooSlow
-                          ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                        isSevereOverflow
+                          ? "bg-rose-500/20 text-rose-300 border border-rose-500/40 font-semibold"
+                          : isWarningOverflow
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
                           : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                       }`}
                     >
-                      {charCount} 字 ({charsPerSec.toFixed(1)} 字/秒)
-                      {isTooFast ? " · 偏快" : isTooSlow ? " · 偏慢" : " · 语速适宜"}
+                      {charCount} / {maxChars} 字 ({charsPerSec.toFixed(1)} 字/秒)
+                      {isSevereOverflow
+                        ? " · 严重超字 (将引发脱节)"
+                        : isWarningOverflow
+                        ? " · 偏多 (配音略急促)"
+                        : " · 完美卡点"}
                     </span>
 
                     {/* Audition Button */}

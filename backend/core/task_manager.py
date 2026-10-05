@@ -239,11 +239,13 @@ class TaskManager:
                 task.add_log("用户确认校对完成，开始后续配音合成...", TaskState.WAITING_REVIEW, 100.0)
 
             # --- STAGE 5: TTS (F5-TTS MLX 原人物声音克隆) ---
-            task.add_log("开始使用 F5-TTS MLX 进行原人物声音克隆与中文配音合成...", TaskState.TTS, 0.0)
+            speed_mode = cfg.get("tts_speed_mode", "balanced")
+            task.add_log(f"开始使用 F5-TTS MLX 进行原人物声音克隆配音 (加速模式: {speed_mode})...", TaskState.TTS, 0.0)
 
             tts_runner = F5TTSCloneRunner(
                 ref_audio_path=task.speaker_ref.get("audio_path"),
-                ref_audio_text=task.speaker_ref.get("ref_text")
+                ref_audio_text=task.speaker_ref.get("ref_text"),
+                speed_mode=speed_mode
             )
             subtitles_with_audio = await tts_runner.generate_all(
                 task.subtitles,

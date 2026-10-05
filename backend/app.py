@@ -47,6 +47,7 @@ class CreateTaskRequest(BaseModel):
     deepseek_model: str = "deepseek4.1flash"
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     deepseek_api_key: str
+    tts_speed_mode: str = "balanced"
 
 class TestLLMRequest(BaseModel):
     api_key: str
@@ -72,6 +73,7 @@ class PreviewTTSRequest(BaseModel):
     task_id: Optional[str] = None
     ref_audio_path: Optional[str] = None
     ref_audio_text: Optional[str] = None
+    speed_mode: str = "balanced"
 
 
 @app.get("/api/health")
@@ -270,7 +272,7 @@ async def preview_tts(req: PreviewTTSRequest):
         service = F5TTSMLXService(ref_audio_path=ref_audio, ref_audio_text=ref_text)
         await loop.run_in_executor(
             None,
-            lambda: service.synthesize(req.text, str(preview_file))
+            lambda: service.synthesize(req.text, str(preview_file), speed_mode=req.speed_mode)
         )
 
         return FileResponse(str(preview_file), media_type="audio/wav")

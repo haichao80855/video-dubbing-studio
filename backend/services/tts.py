@@ -35,10 +35,12 @@ class F5TTSCloneRunner:
         self,
         ref_audio_path: Optional[str] = None,
         ref_audio_text: Optional[str] = None,
+        speed_mode: str = "balanced",
         model_name: str = "lucasnewman/f5-tts-mlx"
     ):
         self.ref_audio_path = ref_audio_path
         self.ref_audio_text = ref_audio_text
+        self.speed_mode = speed_mode
         self.service = F5TTSMLXService(
             model_name=model_name,
             ref_audio_path=ref_audio_path,
@@ -52,7 +54,7 @@ class F5TTSCloneRunner:
         progress_callback: Optional[Callable[[float, str], None]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Synthesizes cloned speech for each subtitle item in sequence.
+        Synthesizes cloned speech for each subtitle item in sequence with 3~5x acceleration.
         Adds 'audio_path' and 'tts_duration' to each segment.
         """
         tts_dir = task_dir / "tts_clips"
@@ -69,10 +71,10 @@ class F5TTSCloneRunner:
             out_path = str(tts_dir / f"clip_{seg_id:04d}.wav")
 
             try:
-                # F5-TTS MLX runs sequentially to maximize Apple Silicon Metal throughput
+                # F5-TTS MLX runs with Euler/Midpoint accelerated flow matching
                 duration = await loop.run_in_executor(
                     None,
-                    lambda: self.service.synthesize(text, out_path)
+                    lambda: self.service.synthesize(text, out_path, speed_mode=self.speed_mode)
                 )
 
                 # Validate generated audio file

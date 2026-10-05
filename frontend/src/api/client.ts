@@ -83,6 +83,7 @@ export interface CreateTaskParams {
   deepseek_model?: string;
   deepseek_base_url?: string;
   deepseek_api_key: string;
+  tts_speed_mode?: string;
 }
 
 export interface LLMTestResult {
@@ -181,6 +182,7 @@ export async function previewTTSAudio(params: {
   task_id?: string;
   ref_audio_path?: string;
   ref_audio_text?: string;
+  speed_mode?: string;
 }): Promise<Blob> {
   const res = await fetch(`${API_BASE}/api/tts/preview`, {
     method: "POST",

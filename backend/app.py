@@ -22,6 +22,7 @@ from backend.config import (
 from backend.core.task_manager import task_manager, TaskState
 from backend.services.tts import EdgeTTSService, CosyVoiceService
 from backend.services.translator import DeepSeekTranslator
+from backend.services.f5_tts_mlx import F5TTSMLXService
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("app")
@@ -43,8 +44,8 @@ app.mount("/outputs", StaticFiles(directory=str(OUTPUTS_DIR)), name="outputs")
 # Request schemas
 class CreateTaskRequest(BaseModel):
     url: str
-    tts_engine: str = "edge_tts"
-    voice_name: str = "zh-CN-YunxiNeural"
+    tts_engine: str = "f5_tts_mlx"
+    voice_name: str = "clone"
     hard_sub: bool = True
     auto_pipeline: bool = False
     asr_model: Optional[str] = None
@@ -70,10 +71,16 @@ class SubtitleItem(BaseModel):
 class ConfirmSubtitlesRequest(BaseModel):
     subtitles: List[SubtitleItem]
 
+class UpdateSpeakerRefRequest(BaseModel):
+    segment_id: int
+
 class PreviewTTSRequest(BaseModel):
     text: str
-    engine: str = "edge_tts"
-    voice: str = "zh-CN-YunxiNeural"
+    engine: str = "f5_tts_mlx"
+    voice: str = "clone"
+    task_id: Optional[str] = None
+    ref_audio_path: Optional[str] = None
+    ref_audio_text: Optional[str] = None
     dashscope_api_key: Optional[str] = None
     cosyvoice_endpoint: Optional[str] = None
 
@@ -199,6 +206,36 @@ async def get_subtitles(task_id: str):
         "subtitles": task.subtitles
     }
 
+@app.get("/api/tasks/{task_id}/speaker-ref")
+async def get_speaker_ref(task_id: str):
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {
+        "task_id": task.task_id,
+        "speaker_ref": task.speaker_ref
+    }
+
+@app.get("/api/tasks/{task_id}/speaker-ref/audio")
+async def get_speaker_ref_audio(task_id: str):
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    audio_path = task.speaker_ref.get("audio_path")
+    if not audio_path or not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="参考原声音频文件不存在")
+    return FileResponse(audio_path, media_type="audio/wav")
+
+@app.post("/api/tasks/{task_id}/speaker-ref/update")
+async def update_speaker_ref(task_id: str, req: UpdateSpeakerRefRequest):
+    new_ref = task_manager.update_speaker_ref(task_id, req.segment_id)
+    if not new_ref:
+        raise HTTPException(status_code=400, detail="更新参考音频切片失败")
+    return {
+        "status": "success",
+        "speaker_ref": new_ref
+    }
+
 @app.post("/api/tasks/{task_id}/subtitles/confirm")
 async def confirm_subtitles(task_id: str, req: ConfirmSubtitlesRequest):
     task = task_manager.get_task(task_id)
@@ -226,15 +263,31 @@ async def preview_tts(req: PreviewTTSRequest):
     """Generates a small audio snippet for audition in the web UI."""
     temp_preview_dir = TASKS_DIR / "previews"
     temp_preview_dir.mkdir(parents=True, exist_ok=True)
-    preview_file = temp_preview_dir / f"preview_{abs(hash(req.text + req.voice)) % 1000000}.wav"
+    preview_file = temp_preview_dir / f"preview_{abs(hash(req.text + req.voice + str(req.task_id))) % 1000000}.wav"
 
     try:
-        if req.engine == "cosyvoice":
+        loop = asyncio.get_running_loop()
+        if req.engine == "f5_tts_mlx":
+            ref_audio = req.ref_audio_path
+            ref_text = req.ref_audio_text
+            if req.task_id:
+                task = task_manager.get_task(req.task_id)
+                if task and task.speaker_ref:
+                    ref_audio = task.speaker_ref.get("audio_path")
+                    ref_text = task.speaker_ref.get("ref_text")
+
+            service = F5TTSMLXService(ref_audio_path=ref_audio, ref_audio_text=ref_text)
+            await loop.run_in_executor(
+                None,
+                lambda: service.synthesize(req.text, str(preview_file))
+            )
+        elif req.engine == "cosyvoice":
             service = CosyVoiceService(api_key=req.dashscope_api_key, endpoint=req.cosyvoice_endpoint)
+            await service.synthesize(req.text, req.voice, str(preview_file))
         else:
             service = EdgeTTSService()
+            await service.synthesize(req.text, req.voice, str(preview_file))
 
-        await service.synthesize(req.text, req.voice, str(preview_file))
         return FileResponse(str(preview_file), media_type="audio/wav")
     except Exception as e:
         logger.error(f"Preview TTS error: {e}")

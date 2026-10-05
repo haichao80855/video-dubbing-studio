@@ -9,6 +9,7 @@ import httpx
 import edge_tts
 from pydub import AudioSegment
 from backend.config import FFMPEG_PATH, FFPROBE_PATH
+from backend.services.f5_tts_mlx import F5TTSMLXService
 
 logger = logging.getLogger(__name__)
 
@@ -139,14 +140,24 @@ class TTSRunner:
 
     def __init__(
         self,
-        engine_type: str = "edge_tts",
+        engine_type: str = "f5_tts_mlx",
         voice_name: str = "zh-CN-YunxiNeural",
         api_key: Optional[str] = None,
-        endpoint: Optional[str] = None
+        endpoint: Optional[str] = None,
+        ref_audio_path: Optional[str] = None,
+        ref_audio_text: Optional[str] = None
     ):
         self.engine_type = engine_type
         self.voice_name = voice_name
-        if engine_type == "cosyvoice":
+        self.ref_audio_path = ref_audio_path
+        self.ref_audio_text = ref_audio_text
+
+        if engine_type == "f5_tts_mlx":
+            self.service = F5TTSMLXService(
+                ref_audio_path=ref_audio_path,
+                ref_audio_text=ref_audio_text
+            )
+        elif engine_type == "cosyvoice":
             self.service = CosyVoiceService(api_key=api_key, endpoint=endpoint)
         else:
             self.service = EdgeTTSService()
@@ -167,8 +178,10 @@ class TTSRunner:
         results = []
         total = len(subtitles)
 
-        # Concurrency limit to prevent rate limits
-        semaphore = asyncio.Semaphore(4)
+        # Concurrency limit (F5-TTS MLX runs best with sequential/bounded concurrency on Metal)
+        concurrency = 1 if self.engine_type == "f5_tts_mlx" else 4
+        semaphore = asyncio.Semaphore(concurrency)
+        loop = asyncio.get_running_loop()
 
         async def process_one(idx: int, item: Dict[str, Any]):
             async with semaphore:
@@ -176,7 +189,13 @@ class TTSRunner:
                 text = item.get("translated_text", "").strip() or item.get("text", "")
                 out_path = str(tts_dir / f"clip_{seg_id:04d}.wav")
                 try:
-                    duration = await self.service.synthesize(text, self.voice_name, out_path)
+                    if self.engine_type == "f5_tts_mlx":
+                        duration = await loop.run_in_executor(
+                            None,
+                            lambda: self.service.synthesize(text, out_path)
+                        )
+                    else:
+                        duration = await self.service.synthesize(text, self.voice_name, out_path)
                 except Exception as e:
                     logger.error(f"TTS synthesis failed for segment {seg_id}: {e}")
                     # Create 0.5s silence as fallback

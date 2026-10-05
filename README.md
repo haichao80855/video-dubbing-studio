@@ -1,6 +1,6 @@
-# 🎬 Video Dubbing Studio (视频智能翻译配音系统)
+# 🎬 Video Dubbing Studio (视频智能翻译与原声克隆配音系统)
 
-> 输入 **Bilibili / YouTube** 视频链接，通过 **MLX ASR → DeepSeek 意译 → CosyVoice 3 / Edge TTS → Forced Alignment → FFmpeg**，全自动或人机协同输出高质量**中文配音 MP4 视频**。
+> 输入 **Bilibili / YouTube** 视频链接，通过 **MLX ASR → DeepSeek 意译 → F5-TTS MLX (原人物声音克隆) / Edge TTS → Forced Alignment → FFmpeg**，全自动或人机协同输出高质量**中文配音 MP4 视频**。
 
 ---
 
@@ -13,16 +13,16 @@
 [原视频与 16kHz WAV 提取]
          │
          ▼ (mlx-whisper Apple Silicon GPU 加速)
-[精准词级时间戳语音识别]
+[精准词级时间戳识别 + 自动截取原人物音色切片 (3~6秒)]
          │
          ▼ (DeepSeek 4.1 Flash / Chat API)
 [口语化意译 + 语速时长匹配]
          │
-         ▼ (现代化 Web 界面: 可选在线校对与试听)
-[校对翻译文案 / 单句在线试听发音] ──► 用户确认
+         ▼ (现代化 Web 界面: 可选在线校对与原声试听/自选)
+[在线听取/更换原声音色种子 + 校对中文字幕] ──► 用户确认
          │
-         ▼ (Edge-TTS / CosyVoice 3)
-[分句中文语音合成]
+         ▼ (F5-TTS MLX 零样本声音克隆 / Edge-TTS)
+[复刻原作者声线与音色，合成中文配音 (Voice Cloned Audio)]
          │
          ▼ (Forced Alignment & atempo 智能变速)
 [保调变速 + 静音填充 + 全轨时间对齐]
@@ -31,12 +31,14 @@
 [输出纯配音中文 MP4 视频与 SRT 字幕]
 ```
 
+- **🎙️ 原人物零样本声音克隆 (Zero-Shot Voice Cloning)**：专为 Apple Silicon Metal 硬件加速优化的 `F5-TTS MLX`，自动截取原视频中 3~6 秒最清晰发言作为音色种子，将翻译出的中文完全以**原视频作者的声线、共鸣与说话韵律**朗读出来，实现真正的「原作者本人说地道中文」！
 - **极速流畅的 Web 界面**：React + Vite + Tailwind CSS，现代精致暗色风格，支持响应式设计与实时流水线进度监控。
 - **前端直接输入 API 密钥 & 一键测试连通性**：在前端设置弹窗中直接输入 `DeepSeek API Key`、自定义 `API Base URL` 与模型名称（默认 `deepseek4.1flash`），内置「检测连通性」按钮即时显示响应延迟与状态诊断，密钥存储在用户浏览器本地（`localStorage`）。
-- **Apple Silicon 硬件加速**：底层采用 Metal 优化的 `mlx-whisper`，在 M 系列 Mac 芯片上推理速度极快，自带精准词级时间戳。
+- **Apple Silicon 硬件加速**：底层采用 Metal 优化的 `mlx-whisper` 与 `F5-TTS MLX`，在 M 系列 Mac 芯片上推理速度极快，自带精准词级时间戳。
 - **配音级智能意译 (DeepSeek)**：Prompt 针对中文配音场景深度调优，严格根据原视频时长控制中文汉字数量（~3.5-4.5字/秒），告别冗长无法念完的机翻。
-- **人机协同在线校对**：翻译完成后可暂停，支持在界面中逐句查看原文、修改中文配音稿、调整时间轴，并提供**单句配音试听**功能，确认满意后再一键合成。
+- **人机协同在线校对 & 原声试听**：翻译完成后可暂停，支持在界面中试听截取的原人物音色样本（可一键切换更换其他发言片段作为音色种子），支持修改中文配音稿，并提供**单句克隆配音试听**功能。
 - **多引擎配音**：
+  - **F5-TTS MLX (推荐 / 默认)**：完全本地离线、零 API 成本、极高还原度复刻原人物声音。
   - **Microsoft Edge TTS**：完全免费、零配置、极速合成，内置云希、晓晓、云健等数十种自然拟真音色。
   - **CosyVoice 3**：支持阿里百炼 DashScope 官方 API 及本地私有化部署端点，高表现力情感音色。
 - **智能时间对齐 (Time-stretching)**：使用 FFmpeg `atempo` 滤镜进行保调变速（不改变音调音质），自动填充段落间自然停顿，确保中文配音与原视频口型和画面完全对齐。

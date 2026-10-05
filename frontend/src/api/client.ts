@@ -38,6 +38,15 @@ export interface TaskResult {
   srt_filename: string;
 }
 
+export interface SpeakerRef {
+  segment_id: number;
+  start: number;
+  end: number;
+  duration: number;
+  ref_text: string;
+  audio_path: string;
+}
+
 export interface TaskStatus {
   task_id: string;
   state:
@@ -59,6 +68,7 @@ export interface TaskStatus {
     uploader?: string;
     thumbnail?: string;
   };
+  speaker_ref?: SpeakerRef;
   logs: TaskLog[];
   subtitles_count: number;
   result?: TaskResult;
@@ -151,10 +161,30 @@ export async function confirmSubtitles(taskId: string, subtitles: SubtitleItem[]
   }
 }
 
+export async function fetchSpeakerRef(taskId: string): Promise<{ task_id: string; speaker_ref: SpeakerRef }> {
+  const res = await fetch(`${API_BASE}/api/tasks/${taskId}/speaker-ref`);
+  if (!res.ok) throw new Error("获取原声参考切片失败");
+  return res.json();
+}
+
+export async function updateSpeakerRef(
+  taskId: string,
+  segmentId: number
+): Promise<{ status: string; speaker_ref: SpeakerRef }> {
+  const res = await fetch(`${API_BASE}/api/tasks/${taskId}/speaker-ref/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_id: segmentId }),
+  });
+  if (!res.ok) throw new Error("切换原声参考切片失败");
+  return res.json();
+}
+
 export async function previewTTSAudio(params: {
   text: string;
   engine: string;
   voice: string;
+  task_id?: string;
   dashscope_api_key?: string;
   cosyvoice_endpoint?: string;
 }): Promise<Blob> {

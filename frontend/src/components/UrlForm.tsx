@@ -28,8 +28,8 @@ export const UrlForm: React.FC<UrlFormProps> = ({
   isLoading,
 }) => {
   const [url, setUrl] = useState("");
-  const [ttsEngine, setTtsEngine] = useState("edge_tts");
-  const [voiceName, setVoiceName] = useState("zh-CN-YunxiNeural");
+  const [ttsEngine, setTtsEngine] = useState("f5_tts_mlx");
+  const [voiceName, setVoiceName] = useState("clone");
   const [hardSub, setHardSub] = useState(true);
   const [autoPipeline, setAutoPipeline] = useState(false); // default: pause for review as requested
 
@@ -105,25 +105,39 @@ export const UrlForm: React.FC<UrlFormProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 pt-2">
           {/* TTS Engine & Voice */}
           <div className="space-y-3 p-4 rounded-2xl bg-slate-950/60 border border-slate-800/80">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <label className="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
                 <Volume2 className="w-4 h-4 text-blue-400" />
-                <span>中文配音引擎与音色</span>
+                <span>中文配音模式</span>
               </label>
-              <div className="flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-xs">
+              <div className="flex rounded-lg bg-slate-900 p-0.5 border border-slate-800 text-[11px] overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTtsEngine("f5_tts_mlx");
+                    setVoiceName("clone");
+                  }}
+                  className={`px-2 py-1 rounded-md transition whitespace-nowrap ${
+                    ttsEngine === "f5_tts_mlx"
+                      ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold shadow-sm"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  ✨ F5-TTS (原声克隆)
+                </button>
                 <button
                   type="button"
                   onClick={() => {
                     setTtsEngine("edge_tts");
                     setVoiceName("zh-CN-YunxiNeural");
                   }}
-                  className={`px-2.5 py-1 rounded-md transition ${
+                  className={`px-2 py-1 rounded-md transition whitespace-nowrap ${
                     ttsEngine === "edge_tts"
                       ? "bg-blue-600 text-white font-medium"
                       : "text-slate-400 hover:text-white"
                   }`}
                 >
-                  Edge TTS (免费)
+                  Edge TTS (免费标准)
                 </button>
                 <button
                   type="button"
@@ -131,7 +145,7 @@ export const UrlForm: React.FC<UrlFormProps> = ({
                     setTtsEngine("cosyvoice");
                     setVoiceName("longxiaochun");
                   }}
-                  className={`px-2.5 py-1 rounded-md transition ${
+                  className={`px-2 py-1 rounded-md transition whitespace-nowrap ${
                     ttsEngine === "cosyvoice"
                       ? "bg-blue-600 text-white font-medium"
                       : "text-slate-400 hover:text-white"
@@ -142,22 +156,35 @@ export const UrlForm: React.FC<UrlFormProps> = ({
               </div>
             </div>
 
-            <select
-              value={voiceName}
-              onChange={(e) => setVoiceName(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-blue-500 transition"
-            >
-              {currentVoices.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
-            <p className="text-[11px] text-slate-400">
-              {ttsEngine === "edge_tts"
-                ? "微软神经语音库，无需配置 Key，支持极速多线程合成"
-                : "CosyVoice 3 自然情感表现力音色（需配置百炼 Key 或本地端点）"}
-            </p>
+            {ttsEngine === "f5_tts_mlx" ? (
+              <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300 space-y-1">
+                <p className="font-semibold flex items-center space-x-1.5 text-blue-200">
+                  <span>🎙️ 原人物零样本声音克隆已启用 (Apple Silicon Metal 加速)</span>
+                </p>
+                <p className="text-[11px] text-blue-300/80 leading-relaxed">
+                  系统将从原视频中自动截取 3~6 秒最清晰发言作为音色种子，由 DeepSeek 翻译的中文将完全以原作者声线和音色说出！您可在校对阶段试听或手动更换种子样本。
+                </p>
+              </div>
+            ) : (
+              <>
+                <select
+                  value={voiceName}
+                  onChange={(e) => setVoiceName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-blue-500 transition"
+                >
+                  {currentVoices.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400">
+                  {ttsEngine === "edge_tts"
+                    ? "微软神经语音库，无需配置 Key，支持极速多线程合成"
+                    : "CosyVoice 3 自然情感表现力音色（需配置百炼 Key 或本地端点）"}
+                </p>
+              </>
+            )}
           </div>
 
           {/* Subtitle & Pipeline Mode */}

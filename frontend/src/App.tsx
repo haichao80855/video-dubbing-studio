@@ -267,8 +267,8 @@ export const App: React.FC = () => {
           onClose={() => setIsReviewOpen(false)}
           taskId={currentTaskId}
           initialSubtitles={reviewSubtitles}
-          ttsEngine={lastSubmittedParams?.tts_engine || "edge_tts"}
-          voiceName={lastSubmittedParams?.voice_name || "zh-CN-YunxiNeural"}
+          ttsEngine={lastSubmittedParams?.tts_engine || "f5_tts_mlx"}
+          voiceName={lastSubmittedParams?.voice_name || "clone"}
           settings={settings}
           onConfirmed={() => {
             setIsReviewOpen(false);

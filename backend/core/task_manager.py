@@ -11,6 +11,7 @@ from backend.services.downloader import VideoDownloader
 from backend.services.asr import get_asr_engine
 from backend.services.translator import DeepSeekTranslator
 from backend.services.tts import TTSRunner
+from backend.services.speaker_extractor import SpeakerExtractor
 from backend.services.aligner import AudioAligner
 from backend.services.composer import VideoComposer
 
@@ -43,6 +44,7 @@ class Task:
         self.task_dir = TASKS_DIR / task_id
         self.task_dir.mkdir(parents=True, exist_ok=True)
         self.video_info: Dict[str, Any] = {}
+        self.speaker_ref: Dict[str, Any] = {}
         self.subscribers: List[asyncio.Queue] = []
         self.review_event = asyncio.Event()
 
@@ -83,6 +85,7 @@ class Task:
             "message": self.current_message,
             "config": {k: v for k, v in self.config.items() if not k.endswith("_key")},
             "video_info": self.video_info,
+            "speaker_ref": self.speaker_ref,
             "subtitles_count": len(self.subtitles),
             "result": self.result,
             "error": self.error,
@@ -115,6 +118,23 @@ class TaskManager:
 
     def get_task(self, task_id: str) -> Optional[Task]:
         return self.tasks.get(task_id)
+
+    def update_speaker_ref(self, task_id: str, segment_id: int) -> Optional[Dict[str, Any]]:
+        task = self.get_task(task_id)
+        if not task or not task.video_info.get("audio_wav_path"):
+            return None
+        extractor = SpeakerExtractor(task_dir=task.task_dir)
+        segments = task.subtitles or []
+        if not segments:
+            return None
+        ref = extractor.prepare_speaker_reference(
+            full_audio_path=task.video_info["audio_wav_path"],
+            segments=segments,
+            chosen_segment_id=segment_id
+        )
+        task.speaker_ref = ref
+        task.save_state()
+        return ref
 
     async def run_pipeline(self, task: Task):
         """Asynchronously executes the video dubbing pipeline."""
@@ -158,6 +178,20 @@ class TaskManager:
             if not raw_segments:
                 raise RuntimeError("视频中未识别出有效人声内容")
 
+            # Extract representative speaker audio for voice cloning
+            task.add_log("智能提取原人物音色参考切片 (3~6秒)...", TaskState.ASR, 95.0)
+            extractor = SpeakerExtractor(task_dir=task.task_dir)
+            speaker_ref = await loop.run_in_executor(
+                None,
+                lambda: extractor.prepare_speaker_reference(
+                    full_audio_path=video_info["audio_wav_path"],
+                    segments=raw_segments
+                )
+            )
+            task.speaker_ref = speaker_ref
+            task.save_state()
+            task.add_log(f"已提取原人物音色样本 (片段 #{speaker_ref['segment_id']}: {speaker_ref['duration']}s)", TaskState.ASR, 100.0)
+
             # --- STAGE 3: TRANSLATION (DeepSeek) ---
             model_name = cfg.get("deepseek_model", "deepseek4.1flash")
             task.add_log(f"正在调用 DeepSeek ({model_name}) 模型进行口语化翻译...", TaskState.TRANSLATING, 0.0)
@@ -194,7 +228,8 @@ class TaskManager:
                         q.put_nowait({
                             "type": "review_ready",
                             "task_id": task.task_id,
-                            "subtitles": task.subtitles
+                            "subtitles": task.subtitles,
+                            "speaker_ref": task.speaker_ref
                         })
                     except Exception:
                         pass
@@ -203,16 +238,19 @@ class TaskManager:
                 await task.review_event.wait()
                 task.add_log("用户确认校对完成，开始后续配音合成...", TaskState.WAITING_REVIEW, 100.0)
 
-            # --- STAGE 5: TTS (Edge-TTS / CosyVoice) ---
-            tts_engine_type = cfg.get("tts_engine", "edge_tts")
-            voice_name = cfg.get("voice_name", "zh-CN-YunxiNeural")
-            task.add_log(f"开始使用 {tts_engine_type} 进行中文配音合成 (音色: {voice_name})...", TaskState.TTS, 0.0)
+            # --- STAGE 5: TTS (F5-TTS MLX / Edge-TTS / CosyVoice) ---
+            tts_engine_type = cfg.get("tts_engine", "f5_tts_mlx")
+            voice_name = cfg.get("voice_name", "clone")
+            engine_desc = "F5-TTS MLX 原人物声音克隆" if tts_engine_type == "f5_tts_mlx" else f"{tts_engine_type} (音色: {voice_name})"
+            task.add_log(f"开始使用 {engine_desc} 进行中文配音合成...", TaskState.TTS, 0.0)
 
             tts_runner = TTSRunner(
                 engine_type=tts_engine_type,
                 voice_name=voice_name,
                 api_key=cfg.get("dashscope_api_key"),
-                endpoint=cfg.get("cosyvoice_endpoint")
+                endpoint=cfg.get("cosyvoice_endpoint"),
+                ref_audio_path=task.speaker_ref.get("audio_path"),
+                ref_audio_text=task.speaker_ref.get("ref_text")
             )
             subtitles_with_audio = await tts_runner.generate_all(
                 task.subtitles,

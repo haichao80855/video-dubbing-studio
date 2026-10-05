@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   X,
   Volume2,
@@ -9,8 +9,17 @@ import {
   Clock,
   Type,
   FileCheck,
+  Mic,
+  RefreshCw,
 } from "lucide-react";
-import { SubtitleItem, previewTTSAudio, confirmSubtitles } from "../api/client";
+import {
+  SubtitleItem,
+  SpeakerRef,
+  previewTTSAudio,
+  confirmSubtitles,
+  fetchSpeakerRef,
+  updateSpeakerRef,
+} from "../api/client";
 import { SettingsState } from "./SettingsModal";
 
 interface SubtitleEditorProps {
@@ -35,11 +44,41 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
   onConfirmed,
 }) => {
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>(initialSubtitles);
+  const [speakerRef, setSpeakerRef] = useState<SpeakerRef | null>(null);
+  const [audioVersion, setAudioVersion] = useState(0);
   const [previewingId, setPreviewingId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUpdatingRef, setIsUpdatingRef] = useState(false);
   const [audioPlayer, setAudioPlayer] = useState<HTMLAudioElement | null>(null);
 
+  useEffect(() => {
+    setSubtitles(initialSubtitles);
+  }, [initialSubtitles]);
+
+  useEffect(() => {
+    if (isOpen && taskId) {
+      fetchSpeakerRef(taskId)
+        .then((res) => {
+          setSpeakerRef(res.speaker_ref);
+        })
+        .catch((err) => console.warn("Fetch speaker ref error:", err));
+    }
+  }, [isOpen, taskId]);
+
   if (!isOpen) return null;
+
+  const handleSwitchSpeakerRef = async (segId: number) => {
+    try {
+      setIsUpdatingRef(true);
+      const res = await updateSpeakerRef(taskId, segId);
+      setSpeakerRef(res.speaker_ref);
+      setAudioVersion((v) => v + 1);
+    } catch (e: any) {
+      alert("切换参考切片失败: " + e.message);
+    } finally {
+      setIsUpdatingRef(false);
+    }
+  };
 
   const handleTextChange = (id: number, newText: string) => {
     setSubtitles((prev) =>
@@ -57,6 +96,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
         text: item.translated_text || item.original_text || "",
         engine: ttsEngine,
         voice: voiceName,
+        task_id: taskId,
         dashscope_api_key: settings.dashscopeApiKey,
         cosyvoice_endpoint: settings.cosyvoiceEndpoint,
       });
@@ -66,8 +106,8 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
       audio.onended = () => setPreviewingId(null);
       audio.onerror = () => setPreviewingId(null);
       await audio.play();
-    } catch (e) {
-      alert("试听失败: " + e);
+    } catch (e: any) {
+      alert("试听生成失败: " + e.message);
       setPreviewingId(null);
     }
   };
@@ -107,7 +147,7 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                可逐句微调中文翻译文案、试听发音音色；确认后系统将立即按此文案合成配音。
+                可微调中文翻译文案、试听配音发音；确认后系统将立即按此文案进行声音克隆合成。
               </p>
             </div>
           </div>
@@ -124,10 +164,14 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
           <div className="flex items-center space-x-4">
             <span className="flex items-center space-x-1">
               <Volume2 className="w-3.5 h-3.5 text-blue-400" />
-              <span>配音引擎: {ttsEngine === "cosyvoice" ? "CosyVoice 3" : "Edge-TTS"}</span>
-            </span>
-            <span className="flex items-center space-x-1">
-              <span>音色: {voiceName}</span>
+              <span>
+                配音模式:{" "}
+                {ttsEngine === "f5_tts_mlx"
+                  ? "F5-TTS MLX (原人物声音克隆)"
+                  : ttsEngine === "cosyvoice"
+                  ? "CosyVoice 3"
+                  : "Edge-TTS (标准)"}
+              </span>
             </span>
           </div>
           <button
@@ -140,12 +184,75 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
           </button>
         </div>
 
+        {/* Voice Clone Reference Card (when using f5_tts_mlx) */}
+        {ttsEngine === "f5_tts_mlx" && (
+          <div className="mx-6 my-4 p-4 rounded-2xl bg-gradient-to-r from-blue-950/40 via-indigo-950/30 to-purple-950/40 border border-blue-500/30 space-y-3 shadow-md">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400">
+                  <Mic className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-white flex items-center space-x-2">
+                    <span>🎙️ 原人物声音克隆参考样本 (音色种子)</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] bg-blue-500/20 text-blue-300 font-semibold">
+                      Metal 硬件加速
+                    </span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    系统已自动截取原视频中最佳发言；所有中文配音将完全以该音色与共鸣感朗读
+                  </p>
+                </div>
+              </div>
+
+              {/* Segment switcher */}
+              <div className="flex items-center space-x-2">
+                <span className="text-[11px] text-slate-300 whitespace-nowrap">更换参考切片:</span>
+                <select
+                  disabled={isUpdatingRef}
+                  value={speakerRef?.segment_id || ""}
+                  onChange={(e) => handleSwitchSpeakerRef(Number(e.target.value))}
+                  className="px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-slate-100 focus:outline-none focus:border-blue-500 transition max-w-[220px]"
+                >
+                  {subtitles.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      #{s.id} ({(s.end - s.start).toFixed(1)}s): {s.original_text?.slice(0, 18)}...
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Audio player for the reference clip */}
+            {speakerRef && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 rounded-xl bg-slate-950/80 border border-slate-800">
+                <div className="text-xs text-slate-300 flex-1 min-w-0">
+                  <p className="truncate text-slate-200">
+                    <span className="text-slate-500 mr-1.5 font-medium">当前音色样本原声:</span>
+                    <span className="italic">"{speakerRef.ref_text}"</span>
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
+                    片段 #{speakerRef.segment_id} · {speakerRef.start.toFixed(2)}s ~{" "}
+                    {speakerRef.end.toFixed(2)}s (时长: {speakerRef.duration.toFixed(2)}s)
+                  </p>
+                </div>
+
+                <audio
+                  key={audioVersion}
+                  controls
+                  src={`/api/tasks/${taskId}/speaker-ref/audio?v=${audioVersion}`}
+                  className="h-8 max-w-xs w-full"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Subtitles List Table */}
         <div className="flex-1 overflow-y-auto p-6 space-y-3 bg-slate-950/40">
           {subtitles.map((item) => {
             const duration = Math.max(0.1, item.end - item.start);
             const charCount = (item.translated_text || "").length;
-            // Pacing estimate: ~4 chars per second is ideal for Chinese voiceover
             const charsPerSec = charCount / duration;
             const isTooFast = charsPerSec > 5.5;
             const isTooSlow = charsPerSec < 2.0 && charCount > 0;
@@ -197,7 +304,13 @@ export const SubtitleEditor: React.FC<SubtitleEditorProps> = ({
                       ) : (
                         <Play className="w-3 h-3 fill-current" />
                       )}
-                      <span>{previewingId === item.id ? "播放中..." : "试听发音"}</span>
+                      <span>
+                        {previewingId === item.id
+                          ? "克隆生成中..."
+                          : ttsEngine === "f5_tts_mlx"
+                          ? "试听克隆原声"
+                          : "试听发音"}
+                      </span>
                     </button>
                   </div>
                 </div>

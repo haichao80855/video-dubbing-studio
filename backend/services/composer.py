@@ -18,6 +18,17 @@ def format_timestamp_srt(seconds: float) -> str:
         millis -= 1000
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
+def wrap_subtitle_text(text: str) -> str:
+    """Splits long sentences at comma/period into comfortable 2-line subtitles."""
+    clean = text.strip()
+    if len(clean) > 28 and ("，" in clean or " " in clean):
+        mid = len(clean) // 2
+        punctuation_indices = [i for i, ch in enumerate(clean) if ch in {"，", "、", " ", "；"}]
+        if punctuation_indices:
+            best_idx = min(punctuation_indices, key=lambda i: abs(i - mid))
+            return clean[:best_idx + 1].strip() + "\n" + clean[best_idx + 1:].strip()
+    return clean
+
 class VideoComposer:
     """
     Composites dubbed audio, subtitles, and video stream into final Chinese MP4.
@@ -35,10 +46,11 @@ class VideoComposer:
             for idx, item in enumerate(subtitles, 1):
                 start_str = format_timestamp_srt(item["start"])
                 end_str = format_timestamp_srt(item["end"])
-                text = item.get("translated_text", "").strip() or item.get("text", "").strip()
+                raw_text = item.get("translated_text", "").strip() or item.get("text", "").strip()
+                formatted_text = wrap_subtitle_text(raw_text)
                 f.write(f"{idx}\n")
                 f.write(f"{start_str} --> {end_str}\n")
-                f.write(f"{text}\n\n")
+                f.write(f"{formatted_text}\n\n")
         return str(srt_path)
 
     def compose_video(

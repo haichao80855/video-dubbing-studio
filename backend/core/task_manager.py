@@ -12,6 +12,7 @@ from backend.services.asr import get_asr_engine
 from backend.services.translator import DeepSeekTranslator
 from backend.services.tts import F5TTSCloneRunner
 from backend.services.speaker_extractor import SpeakerExtractor
+from backend.services.sentence_merger import SentenceMerger
 from backend.services.aligner import AudioAligner
 from backend.services.composer import VideoComposer
 
@@ -178,6 +179,11 @@ class TaskManager:
             if not raw_segments:
                 raise RuntimeError("视频中未识别出有效人声内容")
 
+            # Merge fragmented ASR micro-segments into natural coherent semantic sentences (8~14s)
+            merger = SentenceMerger()
+            merged_segments = merger.merge_segments(raw_segments)
+            task.add_log(f"语义长句合并完成：已将 {len(raw_segments)} 个碎句重整为 {len(merged_segments)} 个自然完整语流", TaskState.ASR, 90.0)
+
             # Extract representative speaker audio for voice cloning
             task.add_log("智能提取原人物音色参考切片 (3~6秒)...", TaskState.ASR, 95.0)
             extractor = SpeakerExtractor(task_dir=task.task_dir)
@@ -194,7 +200,7 @@ class TaskManager:
 
             # --- STAGE 3: TRANSLATION (DeepSeek) ---
             model_name = cfg.get("deepseek_model", "deepseek4.1flash")
-            task.add_log(f"正在调用 DeepSeek ({model_name}) 模型进行口语化翻译...", TaskState.TRANSLATING, 0.0)
+            task.add_log(f"正在调用 DeepSeek ({model_name}) 进行自然长句连贯意译...", TaskState.TRANSLATING, 0.0)
             deepseek_key = cfg.get("deepseek_api_key", "").strip()
             base_url = cfg.get("deepseek_base_url", "https://api.deepseek.com/v1")
             translator = DeepSeekTranslator(
@@ -205,7 +211,7 @@ class TaskManager:
             translated_subtitles = await loop.run_in_executor(
                 None,
                 lambda: translator.translate_segments(
-                    raw_segments,
+                    merged_segments,
                     source_language=detected_lang,
                     progress_callback=lambda p, msg: task.add_log(msg, TaskState.TRANSLATING, p)
                 )

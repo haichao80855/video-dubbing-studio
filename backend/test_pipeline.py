@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from backend.config import FFMPEG_PATH, FFPROBE_PATH, TASKS_DIR, OUTPUTS_DIR
 from backend.services.tts import F5TTSCloneRunner
 from backend.services.aligner import AudioAligner
-from backend.services.composer import VideoComposer, format_timestamp_srt
+from backend.services.composer import VideoComposer, format_timestamp_srt, wrap_subtitle_text
+from backend.services.sentence_merger import SentenceMerger
 from pydub import AudioSegment
 from pydub.generators import Sine
 
@@ -19,14 +20,36 @@ async def test_dubbing_core():
     test_task_dir = TASKS_DIR / "test_task"
     test_task_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Test SRT formatting
-    print("\n1. Testing Timestamp & SRT formatting...")
+    # 1. Test SentenceMerger (Semantic Sentence Aggregation)
+    print("\n1. Testing SentenceMerger (Converting fragmented Whisper clips to natural long sentences)...")
+    raw_micro_segments = [
+        {"id": 1, "start": 0.0, "end": 2.5, "text": "Now it's time to set up the playground that"},
+        {"id": 2, "start": 2.5, "end": 5.1, "text": "we're going to be using to practice our AI coding and"},
+        {"id": 3, "start": 5.3, "end": 8.0, "text": "setting up the environment that we're going to use to edit code."},
+        {"id": 4, "start": 8.2, "end": 11.0, "text": "The main thing that we are going to need is an IDE."},
+        {"id": 5, "start": 11.2, "end": 14.5, "text": "And the one I recommend is Visual Studio Code."},
+    ]
+    merger = SentenceMerger(min_duration=5.0, target_duration=9.0, max_duration=15.0)
+    merged = merger.merge_segments(raw_micro_segments)
+    print(f"✓ Consolidated {len(raw_micro_segments)} fragmented micro-clips into {len(merged)} natural semantic sentences:")
+    for m in merged:
+        print(f"  Sentence #{m['id']} ({m['start']}s ~ {m['end']}s, dur={m['duration']}s): {m['text']}")
+    assert len(merged) < len(raw_micro_segments), "SentenceMerger did not consolidate micro-segments"
+    assert merged[0]["start"] == 0.0, "Start timestamp mismatch"
+    assert merged[-1]["end"] == 14.5, "End timestamp mismatch"
+    print("✓ SentenceMerger verification passed successfully!")
+
+    # 2. Test SRT formatting & subtitle wrapping
+    print("\n2. Testing Timestamp & Subtitle text wrapping...")
     assert format_timestamp_srt(1.234) == "00:00:01,234", "SRT timestamp format mismatch"
     assert format_timestamp_srt(65.5) == "00:01:05,500", "SRT timestamp format mismatch"
-    print("✓ SRT Timestamp formatting verified.")
+    wrapped = wrap_subtitle_text("这是一个非常长且复杂的中文长句测试句子，用于验证在中间逗号处自然换行显示两行字幕")
+    print("  Wrapped subtitle sample:\n", wrapped)
+    assert "\n" in wrapped, "Subtitle was not wrapped at comma"
+    print("✓ Subtitle wrapping verified.")
 
-    # 2. Test Audio Generation & Alignment in 48kHz Stereo with Absolute Timestamp Overlay
-    print("\n2. Testing 48kHz Stereo Alignment & Absolute Timestamp Overlay (Zero Cumulative Drift)...")
+    # 3. Test Audio Generation & Alignment in 48kHz Stereo with Absolute Timestamp Overlay & Silence Compression
+    print("\n3. Testing 48kHz Stereo Alignment & Smart Silence Compression...")
     tts_dir = test_task_dir / "tts_clips"
     tts_dir.mkdir(parents=True, exist_ok=True)
 

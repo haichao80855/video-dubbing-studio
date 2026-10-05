@@ -1,0 +1,41 @@
+# Python
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Node & Frontend
+frontend/node_modules/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Runtime Storage & Temp files
+backend/storage/downloads/*
+backend/storage/tasks/*
+backend/storage/outputs/*
+!backend/storage/downloads/.gitkeep
+!backend/storage/tasks/.gitkeep
+!backend/storage/outputs/.gitkeep
+
+# System & OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Secrets & Local Envs
+.env
+.env.local
+*.pem
+*.key
